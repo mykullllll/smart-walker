@@ -1,0 +1,8 @@
+<launch>
+  <node pkg="laser_filters" type="scan_to_scan_filter_chain" name="leg_laser_filter">
+    <rosparam command="load" file="$(find rplidar_ros)/leg_filter.yaml" />
+    
+    <remap from="scan"          to="/scan" />
+    <remap from="scan_filtered" to="/scan_legs_filtered" />
+  </node>
+</launch> 
