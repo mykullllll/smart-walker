@@ -46,9 +46,8 @@ def calibration(right,left,signal,sampling_frequency,encoder_velocity,current_om
     std_avg=np.mean(std)
 
     last_stride=np.ptp(normalized_smooth)
-    fft_freq=leg_frequency(scissor_smooth,sampling_frequency)
-    fft_freq=fft_freq*(2*np.pi)
     fft_freq_hz=np.clip(leg_frequency(scissor_smooth,sampling_frequency),0.3,2.0)
+    fft_freq=fft_freq_hz*(2*np.pi)
     
 
 

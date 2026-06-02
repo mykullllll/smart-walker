@@ -195,12 +195,13 @@ def process_trial(filepath,sampling_frequency=10):
         feedback_velocity=pd_controller.pd_controller(pelvis)
         
         if calibrated== False:
-            if len(sensor.scissor_window) == 50 and len(sensor.encoder_velocity) == 50:
+            if len(sensor.scissor_window) == 100 and len(sensor.encoder_velocity) == 100:
 
                 cal,x_d,velocity_gain= calibration.calibration(sensor.right,sensor.left,sensor.scissor_window,sampling_frequency,sensor.encoder_velocity,current_omega=oscillator.omega)
                 
                 if cal == True:
                     calibrated=True
+                    print("Calibration complete")
                 else:
                     sensor.left.clear()
                     sensor.right.clear()
@@ -210,7 +211,7 @@ def process_trial(filepath,sampling_frequency=10):
         else:
             last_stride = walker.last_stride(sensor.stride_window)
             if last_stride is not None and feedback_velocity is not None:
-                velocity_command = walker.velocity_comamnd(feedback_velocity,cadence,walker.last_stride(sensor.stride_window),velocity_gain)
+                velocity_command = walker.velocity_comamnd(feedback_velocity,cadence,last_stride,velocity_gain)
                 commanded_timestamps.append(data[4])
                 velocity_history.append(velocity_command)
 
@@ -218,7 +219,6 @@ def process_trial(filepath,sampling_frequency=10):
 
 
     encoder_velocity = np.array([v if v is not None else 0.0 for v in sensor.encoder_velocity])
-    encoder_velocity = np.concatenate([[0.0], encoder_velocity])
 
     average_position = np.array(sensor.avg_position_history)
 
@@ -247,7 +247,7 @@ if num_files == 1:
 
 for ax, filepath, color in zip(axes, files, colors):
     label = os.path.basename(filepath)
-    commanded_timestamps, velocity_history, true_timestamp, true_velocity,feedback_velocity_graph,rsme_feedback = process_trial(filepath)
+    commanded_timestamps, velocity_history, true_timestamp, true_velocity,rsme_feedback = process_trial(filepath)
     
     true_velocity=np.clip(true_velocity,-1.3,1.3)
     velocity_history=np.clip(velocity_history,-1.3,1.3)
