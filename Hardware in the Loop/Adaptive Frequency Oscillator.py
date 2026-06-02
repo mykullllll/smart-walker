@@ -8,6 +8,7 @@ import scipy
 from scipy.signal import savgol_filter, find_peaks
 from scipy.interpolate import interp1d
 from scipy.signal import butter, filtfilt
+import calibration
 import os
 
 files = [
@@ -21,308 +22,220 @@ colors = ['blue', 'green', 'orange','purple']  # one per file
 
 num_files=len(files)
 
+class Gaitsensor:
+    'Handles Signal Processing of LiDAR and Leg detection'
+    def __init__(self,cal_window=None,scissor_window=None,right=None,left=None,encoder_velocity=None,true_timestamp=None,stride_window=None,avg_position_history=None,prev_scissor=0,prev_avg=0,prev_left=0,prev_right=0):
+        self.cal_window = cal_window if cal_window is not None else []
+        self.scissor_window=scissor_window if scissor_window is not None else []
+        self.right=right if right is not None else []
+        self.left=left if left is not None else []
+        self.stride_window= stride_window if stride_window is not None else []
+        self.encoder_velocity=encoder_velocity if encoder_velocity is not None else []
+        self.true_timestamp=true_timestamp if true_timestamp is not None else []
+        self.avg_position_history =avg_position_history if avg_position_history is not None else []
 
-def step_afo(signal,omega0,x0,y0,eps,mu,eta,dt):
-    r=np.sqrt(x0**2 +y0**2) + 1e-6
-    xdot=(mu-np.square(r))*x0 - omega0 * y0 + eps*signal
-    ydot=(mu-np.square(r))*y0 + omega0 * x0
-    omegadot= -eta*signal*y0/r
+        self.prev_scissor=prev_scissor
+        self.prev_avg=prev_avg
+        self.prev_left=prev_left
+        self.prev_right=prev_right
 
-    x_new=xdot*dt+x0
-    y_new=ydot*dt+y0
-
-    omega= np.clip(omega0 + omegadot * dt,0.3,4.0)
-
-    phase = ((np.arctan2(y_new,x_new)) /(2*np.pi)) % 1.0
-
-    return phase, x_new, y_new, omega
-
-#3 Median buffer for outliers
-def median_buffer(raw_left, raw_right, right_buffer, left_buffer, clean_scissor, scissor_history):
-
-    right_buffer.append(raw_right)
-    left_buffer.append(raw_left)
-    if len(right_buffer) > 3:
-        right_buffer.pop(0)
-        left_buffer.pop(0)
-
-    if len(right_buffer) == 3:
-        scissor_val = np.median([right_buffer[i] - left_buffer[i] for i in range(3)])
-        clean_scissor.append(scissor_val)
-        scissor_history.append(scissor_val)
-
-    if len(clean_scissor)>50:
-        scissor_arr=np.array(clean_scissor)
-        scissor_smooth=savgol_filter(scissor_arr,window_length=5,polyorder=3)
-        scissor_smooth=scissor_smooth-np.mean(scissor_smooth)
-        peak_scissor,_=find_peaks(scissor_smooth,prominence=0.3 *np.ptp(scissor_smooth))
-        valley_scissor,_=find_peaks(-scissor_smooth,prominence=0.3*np.ptp(scissor_smooth))
-        clean_scissor.pop(0)
-
-        return peak_scissor, valley_scissor, scissor_smooth, right_buffer, left_buffer, clean_scissor
     
-    return np.array([], dtype=int), np.array([], dtype=int), np.zeros(50), right_buffer, left_buffer, clean_scissor
+
+    def offline_data(self,left_current,right_current,time,encoder):
+
+        if pd.isna(left_current) or pd.isna(right_current):
+            left_raw = self.prev_left
+            right_raw = self.prev_right
+            scissor_signal = self.prev_scissor
+            avg_position=self.prev_avg
+
+            self.left.append(left_raw)
+            self.right.append(right_raw)
+            self.stride_window.append(scissor_signal)
+            self.avg_position_history.append(avg_position)
+        else:
+            left_raw = left_current 
+            right_raw = right_current
+            scissor_signal=left_current-right_current
+            avg_position=(left_current+right_current)/2
+
+            self.left.append(left_current)
+            self.right.append(right_current)
+            self.stride_window.append(left_current-right_current)
+            self.avg_position_history.append(avg_position)
 
 
-#Calibration Standard deviation
-def calibration(peak_scissor,scissor_smooth):
-    normalized_smooth=[]
-    for index in range(len(peak_scissor)-1):
-        start_idx=peak_scissor[index]
-        end_idx=peak_scissor[index+1]
-        step_data=scissor_smooth[start_idx:end_idx]
-        raw_time=np.linspace(0,1,len(step_data))
-        interp_r= interp1d(raw_time,step_data,kind="cubic")
-        normalized_time=np.linspace(0,1,100)
-        stretched_step1= interp_r(normalized_time)
-        normalized_smooth.append(stretched_step1)
-
-    normalized_smooth=np.array(normalized_smooth)
-    calibrated_smooth=np.mean(normalized_smooth,axis=0)
-    std=np.std(normalized_smooth,axis=0)           
-    std_avg=np.mean(std)
-
-    return std_avg,std,normalized_smooth,calibrated_smooth
+        if encoder is not None:
+            self.encoder_velocity.append(encoder)
+        else:
+            self.encoder_velocity.append(None)
+        if time is not None:
+            self.true_timestamp.append(time)
+        else:
+            self.true_timestamp.append(None)
 
 
-def leg_frequency(leg_data,fs):
+        self.prev_scissor=scissor_signal
+        self.prev_avg = avg_position
+        self.prev_left=left_raw
+        self.prev_right=right_raw
 
-    signal=leg_data-np.mean(leg_data)
-    tstep=1/fs  
-    y=np.fft.fft(signal)
-    y=np.abs(y)
-    f=np.fft.fftfreq(len(y),1/fs)  
-    y = y[:int(len(y)/2)]  
-    f = f[:int(len(f)/2)]   
-    #plt.scatter(f,y)
-    sort_indices = np.argmax(y)
-    max_freq=f[sort_indices]
-    #print(f"Movement detected at {max_freq} Hz")
-    return max_freq
+        return left_raw,right_raw,scissor_signal,avg_position
 
 
+class AdaptiveFrequencyOscillator:
+    'Calculate Frequency of signal'
 
-def process_trial(filepath):
+    def __init__(self,sampling_frequency,eta=0.3,eps=1.5,mu=1):
+        self.x=1.0
+        self.y=0
+        self.omega=2
+        self.dt=1/sampling_frequency
+        self.eta=eta
+        self.eps=eps
+        self.mu=mu
 
+    def step_afo(self,signal):
+
+        r=np.sqrt(self.x**2 +self.y**2) + 1e-6
+        xdot=(self.mu-np.square(r))*self.x - self.omega * self.y + self.eps *signal
+        ydot=(self.mu-np.square(r))*self.y + self.omega * self.x
+        omegadot= -self.eta*signal*self.y/r
+
+        self.x= xdot * self.dt + self.x
+        self.y=ydot * self.dt + self.y
+
+        self.omega= np.clip(self.omega + omegadot * self.dt,0.3,4.0)
+
+        phase = ((np.arctan2(self.y,self.x)) /(2*np.pi)) % 1.0
+        cadence=self.omega/(2*np.pi)
+
+        return phase, cadence
+        
+
+class PDController:
+    'Feedback controller'
+
+    def __init__(self,sampling_frequency,x_d,k=2,beta=2,alpha=0.2,filtered_xdot=None,prev_pelvis=None,rsme_feedback=None,feedback=None):
+        self.x_d=x_d
+        self.k=k
+        self.beta=beta
+        self.alpha=alpha
+        self.dt=1/sampling_frequency
+        self.prev_pelvis=prev_pelvis
+        self.rsme_feedback=rsme_feedback if rsme_feedback is not None else []
+        self.feedback=feedback if feedback is not None else []
+        self.filtered_xdot=filtered_xdot
+
+
+    def pd_controller(self,pelvis):
+            
+        if self.prev_pelvis is not None:
+            raw_xdot=(pelvis-self.prev_pelvis) / self.dt
+            if self.filtered_xdot is None:
+                self.filtered_xdot= raw_xdot
+            else:
+                self.filtered_xdot=self.alpha*raw_xdot + self.filtered_xdot * (1-self.alpha)
+
+            self.rsme_feedback.append(pelvis-self.x_d)
+            feedback_velocity=self.k*(pelvis-self.x_d)-(self.filtered_xdot*self.beta)
+            self.prev_pelvis=pelvis
+            return feedback_velocity
+        
+        else:
+            self.prev_pelvis=pelvis
+            return None
+        
+
+class WalkerController:
+    'Velocity commands'
+
+    def __init__(self,window_size=50,stride_window=None):
+        self.window_size=window_size
+        self.stride_window=stride_window if stride_window is not None else []
+        self.stride_history = []
+
+
+    def last_stride(self,stride_window):
+
+        if len(stride_window)>self.window_size:
+            stride_window.pop(0)
+        if len(stride_window)==self.window_size:
+            last_stride = np.ptp(stride_window)            #Need to change this sometime (PTP finds maxiself.mum and miniself.mum of window, but is there a better way to scale the stride length? Kalman maybe)
+            last_stride = np.clip(last_stride,0.3,1.5)
+            self.stride_history.append(last_stride)
+            return last_stride
+        
+        return None
+    
+    def velocity_comamnd(self,feedback_velocity,cadence,last_stride,velocity_gain):
+        velocity_command = cadence*last_stride*velocity_gain + feedback_velocity
+        return velocity_command
+    
+
+
+
+def process_trial(filepath,sampling_frequency=10):
     df = pd.read_csv(filepath)
 
-    #Initial variables 
-    min_dist=0.25
-    max_dist=2
-    sampling_frequency=10
-    radius=.1016
+    sensor = Gaitsensor()
+    oscillator = AdaptiveFrequencyOscillator(sampling_frequency)
+    pd_controller = PDController(sampling_frequency, x_d=0)
+    walker = WalkerController()
 
-
-
-
-    #AFO initial variables
-    x=1.0
-    y=0
-    mu=1
-    eta=0.3
-    eps=1.5
-    omega0=2
-    dt=1/sampling_frequency
-    phi=[]
-    signal=[]
-    phase=[]
-
-
-
-    #Mass spring
-    x_d= -0.4
-    k=2
-    beta=0.3
-    weight=[0.1,0.3,0.6]
-    alpha=0.2
-    filtered_xdot=None
-    prev_pelvis=None
-
-
-
-    #Filter Variables
-    clean_scissor=[]
-    right_buffer=[]
-    left_buffer=[]
-
-    #Kalman filter
-    
-
-    #Clustering data
-    occlusion=0
-    clump=0
-    accurate=0
-    noise=0
-    width_history=[]
-
-    #Calibration Variables
-    gold_calibration=False
-    commanded_timestamps=[]
-    offset_smooth=0
-
-    #Graphing
-    log_time=[]
-    log_x_left=[]
-    log_x_right=[]
-    log_occlusions=[]
-    afo_freq_hist=[]
-    fft_freq_hist=[]
-    stride_window=[]
-    fft_window_size=50
     velocity_history=[]
-    scissor_history=[]
-    stride_history=[]
-    average_position=[]
-    encoder_velocity=[]
-    true_timestamp=[]
-    prev_row=None
-    prev_scissor=0
-    lock_on_time = None
-    feedback_velocity=0
-    feedback_velocity_graph=[]
-    rsme_feedback=[]
-
-
+    commanded_timestamps = []
+    calibrated=False
+    velocity_gain = 1.0
 
     for _, data in df.iterrows():
 
-        if pd.isna(data[0]) or pd.isna(data[2]):
-            scissor_raw = prev_scissor
-        else:
-            #Kalman Filter add
-            scissor_raw=data[0]-data[2]
+        left,right,scissor_signal,pelvis = sensor.offline_data(data[0],data[2],data[4],data[5])
+        phase,cadence=oscillator.step_afo(scissor_signal)
+        feedback_velocity=pd_controller.pd_controller(pelvis)
+        
+        if calibrated== False:
+            if len(sensor.scissor_window) == 50 and len(sensor.encoder_velocity) == 50:
 
-            prev_scissor=scissor_raw
-
-        centered_signal = scissor_raw - offset_smooth
-
-        phase, x, y, omega = step_afo(centered_signal, omega0, x, y, eps, mu, eta, dt)
-        omega0 = omega
-        cadence=(omega0/(2*np.pi))
-        average_position.append((data[2]+data[0])/2)
-        pelvis=(data[2]+data[0])/2
-
-        #Mass spring damper
-
-        if prev_pelvis is not None:
-            raw_xdot=(pelvis-prev_pelvis) / dt
-            filtered_xdot= raw_xdot
-            if filtered_xdot is not None:
-                filtered_xdot=alpha*raw_xdot + filtered_xdot * (1-alpha)
-                rsme_feedback.append(((data[0]+data[2])/2)-x_d)
-                feedback_velocity=k*(((data[0]+data[2])/2)-x_d)-(filtered_xdot*beta)
+                cal,x_d,velocity_gain= calibration.calibration(sensor.right,sensor.left,sensor.scissor_window,sampling_frequency,sensor.encoder_velocity,current_omega=oscillator.omega)
                 
+                if cal == True:
+                    calibrated=True
+                else:
+                    sensor.left.clear()
+                    sensor.right.clear()
+                    sensor.scissor_window.clear()
+                    sensor.encoder_velocity.clear()
+
         else:
-            feedback_velocity=0
-            
-        feedback_velocity_graph.append(feedback_velocity)
-        prev_pelvis=pelvis
-
-            
-
-
-        if prev_row is not None:
-            encoder_velocity.append(data[5])
-
-
-        prev_row=data
-        true_timestamp.append(data[4])
-        log_x_right.append(data[2])
-        log_x_left.append(data[0])
-        afo_freq_hist.append(cadence)
-        stride_window.append(scissor_raw)
-
-
-
-
-        if not gold_calibration:
-            if pd.isna(data[0]) or pd.isna(data[2]):
-                continue
-            else:
-                peak_scissor, valley_scissor, scissor_smooth, right_buffer, left_buffer, clean_scissor = median_buffer(data[0], data[2], right_buffer, left_buffer, clean_scissor, scissor_history)
-
-            if len(peak_scissor)<2:
-                #print("Not enough data points found keep walking")
-                continue
-            else:
-                normalized_smooth=[]
-                std_avg,std,normalized_smooth,calibrated_smooth=calibration(peak_scissor,scissor_smooth)
-            
-            if std_avg> 0.5:
-                clean_scissor=clean_scissor[-40:]
-                #print("Standard Deviation too large")
-                continue
-            else:
-                gold_calibration=True
-                last_stride=np.ptp(calibrated_smooth)
-                last_stride=np.clip(last_stride,0.1,1.5)
-                fft_freq=leg_frequency(np.array(clean_scissor),sampling_frequency)
-                fft_freq=np.clip(fft_freq,0.3,2.0)
-                omega0=fft_freq*(2*np.pi)
-                offset_smooth = np.mean(calibrated_smooth)
-    
-
-                # 1. Calculate the walker's average forward speed over the last 50 frames
-                avg_walker_speed = np.mean(encoder_velocity[-50:])
-                velocity_gain = avg_walker_speed / (fft_freq * last_stride + 1e-6)
-                x_d = np.mean(average_position[-50:])
-            
-
-                continue
-
-        #Velocity Calculation
-        if pd.isna(data[0]) or pd.isna(data[2]):
-            if not gold_calibration:
-                continue
-            else:
-                cadence= (omega0/(2*np.pi)) 
-                target_velocity= last_stride * cadence * velocity_gain
-                velocity_history.append(target_velocity)
+            last_stride = walker.last_stride(sensor.stride_window)
+            if last_stride is not None and feedback_velocity is not None:
+                velocity_command = walker.velocity_comamnd(feedback_velocity,cadence,walker.last_stride(sensor.stride_window),velocity_gain)
                 commanded_timestamps.append(data[4])
-        else:
-            if not gold_calibration:
-                continue
-            if len(stride_window)>fft_window_size:
-                stride_window.pop(0)
-            if len(stride_window)==fft_window_size:
-                last_stride = np.ptp(stride_window)            #Need to change this sometime (PTP finds maximum and minimum of window, but is there a better way to scale the stride length? Kalman maybe)
-                last_stride = np.clip(last_stride,0.3,1.5)
-                stride_history.append(last_stride)
-
-                #Convergence
-                fft_freq=leg_frequency(stride_window,sampling_frequency)
-                if fft_freq - cadence <=0.2:
-                    if lock_on_time is None:
-                        lock_on_time = data[4]
-
-            
-            feed_forward_velocity=cadence * last_stride * velocity_gain
-            velocity_history.append(np.clip(feed_forward_velocity + feedback_velocity,0.0,2.0))
-            commanded_timestamps.append(data[4])
-
-
-    encoder_velocity = [0.0] + encoder_velocity
-    average_position_arr = pd.Series(average_position).ffill().to_numpy()
-
-
-    nyquist = 0.5 * sampling_frequency  # 5.0 Hz for a 10 Hz system
-    cutoff = 0.5                        # Cut off anything faster than 0.5 Hz (kills the stepping wobble)
-    b, a = butter(2, cutoff / nyquist, btype='low')
-    
-    # 2. Apply zero-phase filtering to the position array
-    smoothed_position = filtfilt(b, a, average_position_arr)
+                velocity_history.append(velocity_command)
 
 
 
-    pelvis_velocity=-np.diff(smoothed_position)*sampling_frequency
+
+    encoder_velocity = np.array([v if v is not None else 0.0 for v in sensor.encoder_velocity])
+    encoder_velocity = np.concatenate([[0.0], encoder_velocity])
+
+    average_position = np.array(sensor.avg_position_history)
+
+    rsme_feedback = np.array(pd_controller.rsme_feedback)   
+    rsme_feedback = np.mean(np.square(rsme_feedback))
+
+    true_timestamp = sensor.true_timestamp
+
+
+
+    pelvis_velocity=-np.diff(average_position)* sampling_frequency
     pelvis_velocity=np.append(pelvis_velocity,pelvis_velocity[-1])
     true_velocity=pelvis_velocity+np.array(encoder_velocity)
     true_velocity=np.array(true_velocity)
     velocity_history=np.array(velocity_history)
-    rsme_feedback=np.array(rsme_feedback)
-    rsme_feedback=np.mean(np.square(rsme_feedback))
 
-    return commanded_timestamps, velocity_history, true_timestamp, true_velocity, lock_on_time, feedback_velocity_graph, rsme_feedback
+    return commanded_timestamps, velocity_history, true_timestamp, true_velocity, rsme_feedback
 
 
 
@@ -334,7 +247,7 @@ if num_files == 1:
 
 for ax, filepath, color in zip(axes, files, colors):
     label = os.path.basename(filepath)
-    commanded_timestamps, velocity_history, true_timestamp, true_velocity,lock_on_time,feedback_velocity_graph,rsme_feedback = process_trial(filepath)
+    commanded_timestamps, velocity_history, true_timestamp, true_velocity,feedback_velocity_graph,rsme_feedback = process_trial(filepath)
     
     true_velocity=np.clip(true_velocity,-1.3,1.3)
     velocity_history=np.clip(velocity_history,-1.3,1.3)
@@ -357,9 +270,6 @@ for ax, filepath, color in zip(axes, files, colors):
     ax.plot(commanded_timestamps, velocity_history, color=color, label=f'{label} predicted')
     ax.plot(true_timestamp, true_velocity, color=color, linestyle='--', label=f'{label} true')
 
-    if lock_on_time is not None:
-        # Draw a thick, dotted vertical line at the exact time of convergence
-        ax.axvline(x=lock_on_time, color=color, linewidth=2.5, alpha=0.8, label="Lock-on")
     
     # Y-label goes on every graph
     ax.set_ylabel("velocity (m/s)")
