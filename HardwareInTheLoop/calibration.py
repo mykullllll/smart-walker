@@ -5,12 +5,12 @@ from scipy.interpolate import interp1d
 
 
 def leg_frequency(signal,fs):
-
+    pad = 1024
     signal=signal-np.mean(signal)
-    tstep=1/fs  
-    y=np.fft.fft(signal)
+    #tstep=1/fs  
+    y=np.fft.fft(signal,n=pad)
     y=np.abs(y)
-    f=np.fft.fftfreq(len(y),1/fs)  
+    f=np.fft.fftfreq(len(y),fs)  
     y = y[:int(len(y)/2)]  
     f = f[:int(len(f)/2)]   
     #plt.scatter(f,y)
@@ -20,7 +20,7 @@ def leg_frequency(signal,fs):
     return max_freq
 
 
-def calibration(right,left,signal,sampling_frequency,encoder_velocity,current_omega):
+def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,current_omega):
 
     scissor_arr=np.array(signal)
     scissor_smooth=savgol_filter(scissor_arr,window_length=5,polyorder=3)
@@ -46,17 +46,24 @@ def calibration(right,left,signal,sampling_frequency,encoder_velocity,current_om
     std_avg=np.mean(std)
 
     last_stride=np.ptp(normalized_smooth)
-    fft_freq_hz=np.clip(leg_frequency(scissor_smooth,sampling_frequency),0.3,2.0)
+    fft_freq_hz=np.clip(leg_frequency(scissor_smooth,sampling_frequency),0.3,3)
     fft_freq=fft_freq_hz*(2*np.pi)
     
 
 
-    if std_avg>0.5 or np.abs(current_omega-fft_freq) > 0.5:
+    if std_avg>0.5 or np.abs(current_omega-fft_freq) > 1.0:
+        '''print(current_omega)
+            print(std_avg)'''
+        print(fft_freq)
+        print("Failed Calibration")
         return False, None, None #Calibration Failed 
     else:
         # 1. Calculate the walker's average forward speed over the last 50 frames
-        avg_walker_speed = np.mean(encoder_velocity[-50:])
+        avg_walker_speed = np.mean(cal_encoder_velocity[-50:])
         velocity_gain = avg_walker_speed / (fft_freq_hz * last_stride + 1e-6)
-        x_d = np.mean(np.mean(right[-50:])+np.mean(left[-50:]))
+        x_d = (np.mean(right[-50:])+np.mean(left[-50:]))/2
+        print(fft_freq)
+        print(current_omega)
+        print(velocity_gain)
         return True, x_d, velocity_gain  #Calibration Success
     

@@ -12,19 +12,16 @@ import calibration
 import os
 
 files = [
-    "/Users/michaelnawa/SmartWalker/Simulations/Data/Data/straight_line.csv",
-    "/Users/michaelnawa/SmartWalker/Simulations/Data/Data/slow.csv",
-    "/Users/michaelnawa/SmartWalker/Simulations/Data/Data/fast.csv",
-    "/Users/michaelnawa/SmartWalker/Simulations/Data/Data/staggered.csv",
-
+    "/Users/michaelnawa/Documents/GitHub/smart-walker/HardwareInTheLoop/data/normal.csv",
+    "/Users/michaelnawa/Documents/GitHub/smart-walker/HardwareInTheLoop/data/fast.csv",
 ]
-colors = ['blue', 'green', 'orange','purple']  # one per file
+colors = ['blue', 'green']  # one per file
 
 num_files=len(files)
 
 class Gaitsensor:
     'Handles Signal Processing of LiDAR and Leg detection'
-    def __init__(self,cal_window=None,scissor_window=None,right=None,left=None,encoder_velocity=None,true_timestamp=None,stride_window=None,avg_position_history=None,prev_scissor=0,prev_avg=0,prev_left=0,prev_right=0):
+    def __init__(self,cal_window=None,scissor_window=None,right=None,left=None,encoder_velocity=None,true_timestamp=None,stride_window=None,avg_position_history=None,cal_encoder_velocity=None,prev_scissor=0,prev_avg=0,prev_left=0,prev_right=0):
         self.cal_window = cal_window if cal_window is not None else []
         self.scissor_window=scissor_window if scissor_window is not None else []
         self.right=right if right is not None else []
@@ -33,6 +30,7 @@ class Gaitsensor:
         self.encoder_velocity=encoder_velocity if encoder_velocity is not None else []
         self.true_timestamp=true_timestamp if true_timestamp is not None else []
         self.avg_position_history =avg_position_history if avg_position_history is not None else []
+        self.cal_encoder_velocity = cal_encoder_velocity if cal_encoder_velocity is not None else []
 
         self.prev_scissor=prev_scissor
         self.prev_avg=prev_avg
@@ -51,7 +49,7 @@ class Gaitsensor:
 
             self.left.append(left_raw)
             self.right.append(right_raw)
-            self.stride_window.append(scissor_signal)
+            self.scissor_window.append(scissor_signal)
             self.avg_position_history.append(avg_position)
         else:
             left_raw = left_current 
@@ -61,14 +59,16 @@ class Gaitsensor:
 
             self.left.append(left_current)
             self.right.append(right_current)
-            self.stride_window.append(left_current-right_current)
+            self.scissor_window.append(left_current-right_current)
             self.avg_position_history.append(avg_position)
 
 
         if encoder is not None:
             self.encoder_velocity.append(encoder)
+            self.cal_encoder_velocity.append(encoder)
         else:
             self.encoder_velocity.append(None)
+            self.cal_encoder_velocity.append(None)
         if time is not None:
             self.true_timestamp.append(time)
         else:
@@ -100,12 +100,13 @@ class AdaptiveFrequencyOscillator:
         r=np.sqrt(self.x**2 +self.y**2) + 1e-6
         xdot=(self.mu-np.square(r))*self.x - self.omega * self.y + self.eps *signal
         ydot=(self.mu-np.square(r))*self.y + self.omega * self.x
-        omegadot= -self.eta*signal*self.y/r
+        omegadot= (-self.eta*signal*self.y)/r
 
         self.x= xdot * self.dt + self.x
         self.y=ydot * self.dt + self.y
 
-        self.omega= np.clip(self.omega + omegadot * self.dt,0.3,4.0)
+        self.omega= np.clip(self.omega + omegadot * self.dt,0.3,10.0)
+
 
         phase = ((np.arctan2(self.y,self.x)) /(2*np.pi)) % 1.0
         cadence=self.omega/(2*np.pi)
@@ -140,7 +141,7 @@ class PDController:
             self.rsme_feedback.append(pelvis-self.x_d)
             feedback_velocity=self.k*(pelvis-self.x_d)-(self.filtered_xdot*self.beta)
             self.prev_pelvis=pelvis
-            return feedback_velocity
+            return 0
         
         else:
             self.prev_pelvis=pelvis
@@ -162,7 +163,8 @@ class WalkerController:
             stride_window.pop(0)
         if len(stride_window)==self.window_size:
             last_stride = np.ptp(stride_window)            #Need to change this sometime (PTP finds maxiself.mum and miniself.mum of window, but is there a better way to scale the stride length? Kalman maybe)
-            last_stride = np.clip(last_stride,0.3,1.5)
+            #print(last_stride)
+            #last_stride = np.clip(last_stride,0.3,1.5)
             self.stride_history.append(last_stride)
             return last_stride
         
@@ -193,25 +195,27 @@ def process_trial(filepath,sampling_frequency=10):
         left,right,scissor_signal,pelvis = sensor.offline_data(data[0],data[2],data[4],data[5])
         phase,cadence=oscillator.step_afo(scissor_signal)
         feedback_velocity=pd_controller.pd_controller(pelvis)
-        
-        if calibrated== False:
-            if len(sensor.scissor_window) == 100 and len(sensor.encoder_velocity) == 100:
+        walker.stride_window.append(scissor_signal)
+        last_stride = walker.last_stride(walker.stride_window)
 
-                cal,x_d,velocity_gain= calibration.calibration(sensor.right,sensor.left,sensor.scissor_window,sampling_frequency,sensor.encoder_velocity,current_omega=oscillator.omega)
+        if calibrated== False:
+            if len(sensor.scissor_window) == 100:
+
+                cal,x_d,velocity_gain= calibration.calibration(sensor.right,sensor.left,sensor.scissor_window,sampling_frequency,sensor.cal_encoder_velocity,current_omega=oscillator.omega)
                 
-                if cal == True:
+                if cal == True: 
                     calibrated=True
                     print("Calibration complete")
                 else:
                     sensor.left.clear()
                     sensor.right.clear()
                     sensor.scissor_window.clear()
-                    sensor.encoder_velocity.clear()
+                    sensor.cal_encoder_velocity.clear()
 
         else:
-            last_stride = walker.last_stride(sensor.stride_window)
             if last_stride is not None and feedback_velocity is not None:
                 velocity_command = walker.velocity_comamnd(feedback_velocity,cadence,last_stride,velocity_gain)
+                print(velocity_command)
                 commanded_timestamps.append(data[4])
                 velocity_history.append(velocity_command)
 
@@ -220,7 +224,7 @@ def process_trial(filepath,sampling_frequency=10):
 
     encoder_velocity = np.array([v if v is not None else 0.0 for v in sensor.encoder_velocity])
 
-    average_position = np.array(sensor.avg_position_history)
+    #average_position = np.array(sensor.avg_position_history)
 
     rsme_feedback = np.array(pd_controller.rsme_feedback)   
     rsme_feedback = np.mean(np.square(rsme_feedback))
@@ -229,9 +233,9 @@ def process_trial(filepath,sampling_frequency=10):
 
 
 
-    pelvis_velocity=-np.diff(average_position)* sampling_frequency
-    pelvis_velocity=np.append(pelvis_velocity,pelvis_velocity[-1])
-    true_velocity=pelvis_velocity+np.array(encoder_velocity)
+   # pelvis_velocity=-np.diff(average_position)* sampling_frequency
+    #pelvis_velocity=np.append(pelvis_velocity,pelvis_velocity[-1])
+    true_velocity=np.array(encoder_velocity)
     true_velocity=np.array(true_velocity)
     velocity_history=np.array(velocity_history)
 
@@ -249,8 +253,8 @@ for ax, filepath, color in zip(axes, files, colors):
     label = os.path.basename(filepath)
     commanded_timestamps, velocity_history, true_timestamp, true_velocity,rsme_feedback = process_trial(filepath)
     
-    true_velocity=np.clip(true_velocity,-1.3,1.3)
-    velocity_history=np.clip(velocity_history,-1.3,1.3)
+    #true_velocity=np.clip(true_velocity,-1.3,1.3)
+    #velocity_history=np.clip(velocity_history,-1.3,1.3)
 
     #Velocity error
     print(f"\n--- {label} ---")
@@ -269,6 +273,7 @@ for ax, filepath, color in zip(axes, files, colors):
     # Plot directly onto 'ax' (the specific subplot for this loop iteration) instead of 'ax2'
     ax.plot(commanded_timestamps, velocity_history, color=color, label=f'{label} predicted')
     ax.plot(true_timestamp, true_velocity, color=color, linestyle='--', label=f'{label} true')
+    ax.plot()
 
     
     # Y-label goes on every graph
