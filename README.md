@@ -18,6 +18,15 @@ One caveat to the AFO is that it doesn't take into account how far the user is t
 ### Kalman Filter
 
 ### Scissor Metric
+The input signal I chose was the difference in position of the left leg relative to the right. 
+
+$$
+\begin{aligned}
+\ x_{signal} &= x_{left} - x_{right}
+\end{aligned}
+$$
+
+This is optimal for the AFO because it's tracking the frequency of the legs not the frequency relative to the walker. It also removes any offset from 0 that both legs will inherently have. 
 
 
 ### Hopf Adaptive Frequency Oscillator (AFO) 
