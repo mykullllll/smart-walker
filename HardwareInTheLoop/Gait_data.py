@@ -152,14 +152,7 @@ if __name__== "__main__":
                 continue
             collisions = process_scan(current_scan.angle_min,current_scan.angle_max,current_scan.angle_increment,min_dist,max_dist,current_scan.ranges)
             raw_left,raw_right,isoccluded= cluster_find(collisions,prev_right,prev_left)
-            prev_right=raw_right
-            prev_left=raw_left
-            right_history.append(raw_right)
-            left_history.append(raw_left)
-            encoder_value.append(encoder.pose.pose.position.x)
-            elapsed = rospy.Time.now().to_sec() - start_time
-            time_stamp.append(elapsed)
-            rate.sleep()
+
 
 
     except rospy.ROSInterruptException:

@@ -20,7 +20,7 @@ colors = ['blue', 'green']  # one per file
 num_files=len(files)
 
 class Gaitsensor:
-    'Handles Signal Processing of LiDAR and Leg detection'
+    'Handles Signal Processing after Clustering'
     def __init__(self,cal_window=None,scissor_window=None,right=None,left=None,encoder_velocity=None,true_timestamp=None,stride_window=None,avg_position_history=None,cal_encoder_velocity=None,prev_scissor=0,prev_avg=0,prev_left=0,prev_right=0):
         self.cal_window = cal_window if cal_window is not None else []
         self.scissor_window=scissor_window if scissor_window is not None else []
@@ -61,7 +61,6 @@ class Gaitsensor:
             self.right.append(right_current)
             self.scissor_window.append(left_current-right_current)
             self.avg_position_history.append(avg_position)
-
 
         if encoder is not None:
             self.encoder_velocity.append(encoder)
@@ -215,6 +214,7 @@ def process_trial(filepath,sampling_frequency=10):
         else:
             if last_stride is not None and feedback_velocity is not None:
                 velocity_command = walker.velocity_comamnd(feedback_velocity,cadence,last_stride,velocity_gain)
+
                 print(velocity_command)
                 commanded_timestamps.append(data[4])
                 velocity_history.append(velocity_command)
