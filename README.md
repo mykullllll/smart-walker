@@ -8,20 +8,18 @@ The objectives of this project:
 
 1. Design a control system that can measure the users intent through a 2D LiDAR scan of the patients legs in order to "walk" in rhythm with the user.
 2. Extract gait metrics from sessions i.e (Velocity, Stride Length and Time Variability, Gait Symmetry, Lateral Step Length)
-3. Execute Proof of Concept on different gait patterns. 
-
-![Hybrid Feedforward Feedback Control Loop](Docs/AFO_Control.drawio.svg)
-
-
+3. Execute Proof of Concept on different gait patterns.
+4. 
 # How It Works
 It's difficult to create a real time control system that uses only 2D LiDAR scans due to the low 10 Hz sampling rate, occlusion, and noise from outside LiDAR scans. Because of this, traditional frequency calculation methods like a Fast Fourier Transforms (FFT) has built in latency proportional to it's window size, and resolution is also inversely proportional to the latency shown in the equations below. For a control system that needs to walk in rhythm with a patient that has irregular pacing i.e (changes in stride length and step timing) delay in motor control can cause discomfort and potential injuries when walking. 
-
 
 In order to solve this I implemented an Hopf Adaptive Frequency Oscillator (AFO) that uses a coupled set of differential equations that react to every frame and converges to the frequency of any input signal over time. 
 
 To make sure the input signal to the AFO doesn't have unpredictable noise and is filtered in real time I used a Kalman filter to predict the next data point. 
 
 One caveat to the AFO is that it doesn't take into account how far the user is to the walker, so I also added a PD controller that takes the average distance of the users pelvis during calibration as the desired distance between the patient and walker. This ensures the walker to constantly be at a safe distance between itself and the patient by either accelerating or decelerating to keep in pace with the user. 
+
+![Hybrid Feedforward Feedback Control Loop](Docs/AFO_Control.drawio.svg)
 
 ## Components
 
