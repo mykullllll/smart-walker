@@ -396,9 +396,11 @@ if __name__== "__main__":
             else:
                 if last_stride is not None and feedback_velocity is not None:
                     velocity_command = walker.velocity_command(feedback_velocity,cadence,last_stride,velocity_gain)
-
+                    pub_right_motor.publish(velocity_command)
+                    pub_left_motor.publish(velocity_command)
                     commanded_timestamps.append(current_time)
                     velocity_history.append(velocity_command)
+                    
 
         else:
             rate.sleep()

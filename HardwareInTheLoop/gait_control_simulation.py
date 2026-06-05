@@ -1,13 +1,6 @@
 import pandas as pd
 from matplotlib import pyplot as plt
 import numpy as np
-from sklearn.cluster import DBSCAN, KMeans
-from matplotlib.animation import FuncAnimation 
-import time
-import scipy
-from scipy.signal import savgol_filter, find_peaks
-from scipy.interpolate import interp1d
-from scipy.signal import butter, filtfilt
 import calibration
 import os
 
