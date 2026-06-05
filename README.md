@@ -34,8 +34,8 @@ $$
 \ r     &= \sqrt{y^2 + x^2} \\
 \dot{x} &= (\mu - r^2)x - y + KF(t) \\
 \dot{y} &= (\mu - r^2)y + x \\
-\dot{\Omega} &= \frac{\eta F(t) y}{r}
-\Omega  &= dot{\Omega} * dt + \Omega
+\dot{\omega} &= \frac{\eta F(t) y}{r} \\
+\omega  &= \dot{\omega} * dt + \omega
 \end{aligned}
 $$
 
@@ -74,9 +74,9 @@ $$
 
 $$
 \begin{aligned}
-\ Velocity_{Feedback} &= k (x_{signal} - x_{calibrated}) - \beta (\dot{x})
-\ Velocity_{AFO} &= \Omega * Sampling Frequency * Stride Length * Velocity Gain
-\ Velocity &= Velocity_{AFO} + Velocity_{Feedback}
+\ Velocity_{Feedback} &= k (x_{signal} - x_{calibrated}) - \beta (\dot{x}) \\
+\ Velocity_{AFO} &= \omega * Sampling Frequency * Stride Length * Velocity Gain \\
+\ Velocity &= Velocity_{AFO} + Velocity_{Feedback} \\
 \end{aligned}
 $$
 
