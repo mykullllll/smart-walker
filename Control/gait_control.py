@@ -357,7 +357,7 @@ if __name__== "__main__":
             continue
 
 
-        current_time = rospy.Time.now().to_sec()- start_time
+        current_time = rospy.Time.now().to_sec() - start_time
         encoder_velocity=encoder.twist.twist.linear.x
 
 
@@ -400,7 +400,7 @@ if __name__== "__main__":
                     pub_left_motor.publish(velocity_command)
                     commanded_timestamps.append(current_time)
                     velocity_history.append(velocity_command)
-                    
+
 
         else:
             rate.sleep()
