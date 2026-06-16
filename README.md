@@ -22,7 +22,15 @@ One caveat to the AFO is that it doesn't take into account how far the user is t
 
 ![Hybrid Feedforward Feedback Control Loop](Docs/Overall_Control.drawio.svg)
 
+
+
+
 ## Components
+
+
+### Clustering Algorithim (DBScan)
+
+In order to identify each thighs centroid DBScan was used because of it's ability to idenity and isolate noise. Since laser scans of the thighs are close together it was important to use a small radius.
 
 ### Hopf Adaptive Frequency Oscillator (AFO) 
 
@@ -37,6 +45,7 @@ $$
 \omega  &= \dot{\omega} * dt + \omega
 \end{aligned}
 $$
+
 
 https://github.com/user-attachments/assets/0b433561-8def-46b0-a6dc-acc1155655d4
 
@@ -106,9 +115,6 @@ In order to validate and tune gains from the AFO, I collected own gait pattern d
 
 ### Calibration
 * `calibration`: Takes a specified window and interpolates the data between each stride to normalize each stride to be a 1x100 array. Calculates the standard deviation along axis = 0. Returns `True`, `average position`, and `velocity_gain` if `std_avg` < 0.5. 
-
-### Velocity Calculation
-
 
 
 

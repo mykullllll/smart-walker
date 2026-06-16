@@ -7,25 +7,25 @@ from matplotlib.animation import FuncAnimation
 #Initial Inputs
 sampling_frequency=60
 dt=1/sampling_frequency
-init_mu=2
-init_eps=1.5
-init_eta=0.3
-init_frequency=2
-init_amplitude=1
-init_noise=1
+init_mu=1
+init_eps=2.0
+init_eta=4.0
+init_frequency=1.0
+init_amplitude=1.0
+init_noise=0.05
 t=0
 
 
 #AFO state Variables
 
-x_state,y_state,omega_state = 1, 0, 2
+x_state,y_state,omega_state = 1, 0, 6.0
 
 #Signal Input
 def f(t,amplitude,frequency,noise):
     return amplitude*np.sin(2*np.pi*frequency*t)+np.random.normal(0,noise)
 
 
-fig, (ax1,ax2,ax3) = plt.subplots(nrows=1,ncols=3,figsize=(15,6))
+fig, (ax1,ax2,ax3,ax4) = plt.subplots(nrows=1,ncols=4,figsize=(15,6))
 
 plt.subplots_adjust(
     left=0.05,    # left edge of plots (0=figure left edge)
@@ -46,8 +46,7 @@ def step_afo(signal,omega0,x0,y0,eps,mu,eta):
     x_new=xdot*dt+x0
     y_new=ydot*dt+y0
 
-
-    omega= (omega0 + omegadot * dt)
+    omega = np.clip(omega0 + omegadot * dt, 0.3, 10.0)
 
     phase = (np.arctan2(y_new,x_new) + np.pi)/(2*np.pi)
 
@@ -57,12 +56,13 @@ def step_afo(signal,omega0,x0,y0,eps,mu,eta):
 
 
 #Plots
-time_history = deque(maxlen=100)
-sig_buf = deque(maxlen=100)
-afo_buf_x = deque(maxlen=100)
-afo_buf_y = deque(maxlen=100)
-signal_freq_buf=deque(maxlen=100)
-afo_freq_buf=deque(maxlen=100)
+time_history = deque(maxlen=500)
+sig_buf = deque(maxlen=500)
+afo_buf_x = deque(maxlen=500)
+afo_buf_y = deque(maxlen=500)
+signal_freq_buf=deque(maxlen=500)
+afo_freq_buf=deque(maxlen=500)
+convergence=deque(maxlen=500)
 
 
 signal_line, = ax1.plot([],[],lw=2,color='Blue')
@@ -83,6 +83,10 @@ ax3.legend(loc="upper right")
 ax3.set_ylim(0,6)
 ax3.set_title('Frequency Convergence')
 
+variance, = ax4.plot([],[],color='Blue',label="Convergence to Input signal")
+ax4.legend(loc='upper right')
+ax4.set_ylim(0,6)
+ax4.set_title('Time to convergence')
 
 
 
@@ -100,7 +104,7 @@ ax_noise=fig.add_axes([0.25, 0.3, 0.65, 0.03])
 amp_slider   = Slider(ax=ax_amp,   label='Input Amplitude',   valmin=0, valmax=8.0, valstep=0.1, valinit=init_amplitude)
 mu_slider    = Slider(ax=ax_mu,    label='mu',                valmin=0, valmax=4.0, valstep=0.1, valinit=init_mu)
 eps_slider   = Slider(ax=ax_eps,   label='eps',               valmin=0, valmax=3.0, valstep=0.1, valinit=init_eps)
-eta_slider   = Slider(ax=ax_eta,   label='eta',               valmin=0, valmax=1.0, valstep=0.05,valinit=init_eta)
+eta_slider   = Slider(ax=ax_eta,   label='eta',               valmin=0, valmax=5.0, valstep=0.05,valinit=init_eta)
 freq_slider  = Slider(ax=ax_freq,  label='Input Frequency',   valmin=0, valmax=4.0, valstep=0.1, valinit=init_frequency)
 noise_slider = Slider(ax=ax_noise, label='Input noise',       valmin=0, valmax=3.0, valstep=0.1, valinit=init_noise)
 
@@ -129,12 +133,15 @@ def update_animation(frame):
     afo.set_data(afo_buf_x,afo_buf_y)
 
     signal_freq_buf.append(current_freq)
-    afo_freq_buf.append(omega_state)
+    afo_freq_buf.append(omega_state/(2*np.pi))
+
+    convergence.append(current_freq - (omega_state/(2*np.pi)))
 
     input_freq.set_data(time_history,signal_freq_buf)
     afo_freq.set_data(time_history, afo_freq_buf)
     signal_line.set_data(time_history,sig_buf)
     afo_line.set_data(time_history,afo_buf_x)
+    variance.set_data(time_history,convergence)
 
 
     ax1.set_xlim(time_history[0],time_history[-1]+dt)
@@ -145,6 +152,9 @@ def update_animation(frame):
 
     ax3.set_xlim(time_history[0],time_history[-1]+dt)
     ax3.set_ylim(0,10)
+    
+    ax4.set_xlim(time_history[0],time_history[-1]+dt)
+    ax4.set_ylim(-5,5)
     
 
 ani = FuncAnimation(fig, update_animation, interval=10, blit=False, cache_frame_data=False,save_count=900)
