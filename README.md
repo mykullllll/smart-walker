@@ -20,7 +20,7 @@ To make sure the input signal to the AFO doesn't have unpredictable noise and is
 
 One caveat to the AFO is that it doesn't take into account how far the user is to the walker, so I also added a PD controller that takes the average distance of the users pelvis during calibration as the desired distance between the patient and walker. This ensures the walker to constantly be at a safe distance between itself and the patient by either accelerating or decelerating to keep in pace with the user. 
 
-![Hybrid Feedforward Feedback Control Loop](Docs/AFO_Control.drawio.svg)
+![Hybrid Feedforward Feedback Control Loop](Docs/Overall_Control.drawio.svg)
 
 ## Components
 
