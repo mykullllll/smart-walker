@@ -32,7 +32,6 @@ $$
 \begin{aligned}
 \ r     &= \sqrt{y^2 + x^2} \\
 \dot{x} &= (\mu - r^2)x - y + \epsilon * F(t) \\
-\dot{x} &= (\mu - r^2)x - y + F(t) \\
 \dot{y} &= (\mu - r^2)y + x \\
 \dot{\omega} &= \frac{\eta F(t) y}{r} \\
 \omega  &= \dot{\omega} * dt + \omega
@@ -42,9 +41,11 @@ $$
 https://github.com/user-attachments/assets/0b433561-8def-46b0-a6dc-acc1155655d4
 
 
-
 > [!NOTE]
-> Need to add animation, and explanation of what each gain does
+> * $\eta$ - Changes the rate of convergence of the AFO frequency to the input signal frequency
+> * $\epsilon$ - Changes sensitivity of \dot{x} to the input signal
+> * $\mu$ - Baseline radius with no input signal. Represents the amplitude of your AFO.  
+
 
 ### Scissor Metric
 The input signal I chose was the difference in position of the left leg relative to the right. If we were to take the raw distance of each leg in terms of the walker we would have two different leg frequencies (Left and Right). This creates more complexity as we need to calculate when to use one leg frequency over the other and with a sampling rate of 10 Hz, it's common to miss heel strikes the moment they happen. In addition, this would create jittery and uncomfortable changes in velocity for the user. 
@@ -85,7 +86,7 @@ $$
 
 
 # Simulation
-In order to validate my approach and tune the gains on my AFO, I collected my own gait pattern data, which I used to calculate convergence of real frequency to my real time AFO calculation through an offline Fast Fourier Transform. In order to accurately simulate real time analysis I added expected hardware latency which is shown in the flow chart below. 
+In order to validate and tune gains from the AFO, I collected own gait pattern data from my own walking patterns, which I used to calculate convergence of real frequency to my real time AFO calculation through an offline Fast Fourier Transform. In order to accurately simulate real time analysis I added expected hardware latency which is shown in the flow chart below. 
 
 ![Data Flow](Docs/AFO_Control.drawio.svg)
 > [!NOTE]
