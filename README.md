@@ -88,7 +88,7 @@ $$
 # Simulation
 In order to validate and tune gains from the AFO, I collected own gait pattern data from my own walking patterns, which I used to calculate convergence of real frequency to my real time AFO calculation through an offline Fast Fourier Transform. In order to accurately simulate real time analysis I added expected hardware latency which is shown in the flow chart below. 
 
-![Data Flow](Docs/AFO_Control.drawio.svg)
+![Data Flow](Docs/DataFlow.drawio.svg)
 > [!NOTE]
 > Data flow Latency
 
