@@ -9,7 +9,8 @@ The objectives of this project:
 1. Design a control system that can measure the users intent through a 2D LiDAR scan of the patients legs in order to "walk" in rhythm with the user.
 2. Extract gait metrics from sessions i.e (Velocity, Stride Length and Time Variability, Gait Symmetry, Lateral Step Length)
 3. Execute Proof of Concept on different gait patterns.
-4. 
+
+
 # How It Works
 It's difficult to create a real time control system that uses only 2D LiDAR scans due to the low 10 Hz sampling rate, occlusion, and noise from outside LiDAR scans. Because of this, traditional frequency calculation methods like a Fast Fourier Transforms (FFT) has built in latency proportional to it's window size, and resolution is also inversely proportional to the latency shown in the equations below. For a control system that needs to walk in rhythm with a patient that has irregular pacing i.e (changes in stride length and step timing) delay in motor control can cause discomfort and potential injuries when walking. 
 
@@ -30,7 +31,7 @@ The Hopf Adaptive Frequency Oscillator is a coupled set of differential equation
 $$
 \begin{aligned}
 \ r     &= \sqrt{y^2 + x^2} \\
-\dot{x} &= (\mu - r^2)x - y + KF(t) \\
+\dot{x} &= (\mu - r^2)x - y + \epsilon * F(t) \\
 \dot{y} &= (\mu - r^2)y + x \\
 \dot{\omega} &= \frac{\eta F(t) y}{r} \\
 \omega  &= \dot{\omega} * dt + \omega
