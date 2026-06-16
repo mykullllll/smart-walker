@@ -39,6 +39,9 @@ $$
 \end{aligned}
 $$
 
+https://github.com/user-attachments/assets/0b433561-8def-46b0-a6dc-acc1155655d4
+
+
 
 > [!NOTE]
 > Need to add animation, and explanation of what each gain does
