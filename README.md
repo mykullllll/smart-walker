@@ -31,13 +31,18 @@ The Hopf Adaptive Frequency Oscillator is a coupled set of differential equation
 $$
 \begin{aligned}
 \ r     &= \sqrt{y^2 + x^2} \\
+<<<<<<< HEAD
 \dot{x} &= (\mu - r^2)x - y + \epsilon * F(t) \\
+=======
+\dot{x} &= (\mu - r^2)x - y + F(t) \\
+>>>>>>> 1d50305 (Added animation and cleaned up code for AFO animation)
 \dot{y} &= (\mu - r^2)y + x \\
 \dot{\omega} &= \frac{\eta F(t) y}{r} \\
 \omega  &= \dot{\omega} * dt + \omega
 \end{aligned}
 $$
 
+(HardwareInTheLoop/afo_animation.mp4)
 
 > [!NOTE]
 > Need to add animation, and explanation of what each gain does
