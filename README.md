@@ -43,7 +43,7 @@ https://github.com/user-attachments/assets/0b433561-8def-46b0-a6dc-acc1155655d4
 
 > [!NOTE]
 > * $\eta$ - Changes the rate of convergence of the AFO frequency to the input signal frequency
-> * $\epsilon$ - Changes sensitivity of \dot{x} to the input signal
+> * $\epsilon$ - Changes sensitivity of $\dot{x}$ to the input signal
 > * $\mu$ - Baseline radius with no input signal. Represents the amplitude of your AFO.  
 
 
