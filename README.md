@@ -46,8 +46,7 @@ $$
 \end{aligned}
 $$
 
-
-https://github.com/user-attachments/assets/0b433561-8def-46b0-a6dc-acc1155655d4
+![AFO Animation](HardwareInTheLoop/data/afo_animation.mp4)
 
 
 > [!NOTE]
