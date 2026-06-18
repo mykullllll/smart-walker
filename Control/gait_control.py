@@ -1,8 +1,8 @@
 from matplotlib import pyplot as plt
 import numpy as np
 from sklearn.cluster import DBSCAN, KMeans
-from matplotlib.animation import FuncAnimation 
 import rospy
+from scipy.signal import butter,filtfilt
 from scipy.interpolate import interp1d
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32, Bool, Float64
@@ -158,7 +158,12 @@ class SignalProcessor:
         self.prev_left=prev_left
         self.prev_right=prev_right
 
-    
+    def lowpass_filter(self,data,cutoff,fs,order=4):
+            nyq = 0.5 * fs
+            normal_cutoff = cutoff / nyq
+            b, a = butter(order, normal_cutoff, btype='low')
+            return filtfilt(b, a, data)
+
 
     def offline_data(self,left_current,right_current,time,encoder):
 
@@ -205,9 +210,10 @@ class SignalProcessor:
 
 
 class AdaptiveFrequencyOscillator:
-    'Calculate Frequency of signal'
+    #Calculate Frequency of signal
 
     def __init__(self,sampling_frequency,eta=0.3,eps=1.5,mu=1):
+        self.sampling_frequency=sampling_frequency
         self.x=1.0
         self.y=0
         self.omega=2
@@ -235,38 +241,48 @@ class AdaptiveFrequencyOscillator:
         return phase, cadence
         
 
-class PDController:
-    'Feedback controller'
+class PIDController:
+    """Feedback controller"""
 
-    def __init__(self,sampling_frequency,x_d,k=2,beta=2,alpha=0.2,filtered_xdot=None,prev_pelvis=None,rsme_feedback=None,feedback=None):
+    def __init__(self,sampling_frequency,x_d,k=2,beta=2,alpha=0.2,filtered_xdot=None,prev_pelvis=None,rsme_feedback=None,feedback=None,prev_error=None):
+        self.sampling_frequency=sampling_frequency
         self.x_d=x_d
         self.k=k
         self.beta=beta
         self.alpha=alpha
         self.dt=1/sampling_frequency
-        self.prev_pelvis=prev_pelvis
+        self.prev_error=prev_pelvis
         self.rsme_feedback=rsme_feedback if rsme_feedback is not None else []
         self.feedback=feedback if feedback is not None else []
         self.filtered_xdot=filtered_xdot
+        self.prev_error=prev_error if prev_error is not None else []
 
 
-    def pd_controller(self,pelvis):
+
+    def pid_controller(self,pelvis,state):
+        if not state:
+            self.prev_error = []
+        error=self.x_d - pelvis
+        self.prev_error.append(error)
+        if self.prev_error > 10:
+            alpha = 0.1
+            try:
+            #Lowpass Filter
+                if self.prev_error is None:
+                    self.prev_error = float(error)
+                else:
+                    self.prev_error = alpha * float(error) + (1 - alpha) * float(self.prev_error)
+            except Exception:
+                self.prev_error = float(pelvis)
             
-        if self.prev_pelvis is not None:
-            raw_xdot=(pelvis-self.prev_pelvis) / self.dt
-            if self.filtered_xdot is None:
-                self.filtered_xdot= raw_xdot
-            else:
-                self.filtered_xdot=self.alpha*raw_xdot + self.filtered_xdot * (1-self.alpha)
-
-            self.rsme_feedback.append(pelvis-self.x_d)
-            feedback_velocity=self.k*(pelvis-self.x_d)-(self.filtered_xdot*self.beta)
-            self.prev_pelvis=pelvis
-            return 0
-        
+            i_term= self.alpha * np.trapz(self.prev_error, np.arange(len(self.prev_error)))
+            d_term = ((error - self.prev_error[-2]) / self.dt) * self.beta
+            p_term = self.k * error 
+            feedback_velocity = d_term + i_term + p_term
+            return feedback_velocity
         else:
-            self.prev_pelvis=pelvis
             return None
+
         
 
 class WalkerController:
@@ -291,10 +307,10 @@ class WalkerController:
         
         return None
     
-    def velocity_command(self,feedback_velocity,cadence,last_stride,velocity_gain):
-        velocity_command = cadence*last_stride*velocity_gain + feedback_velocity
+    def velocity_command(self,cadence,last_stride,velocity_gain):
+        velocity_command = cadence*last_stride*velocity_gain
         return velocity_command
-   
+
 
 encoder = None
 def odom_callback(msg:Odometry):
@@ -310,8 +326,8 @@ def scan_callback(msg:LaserScan):
 if __name__== "__main__":
     rospy.init_node('Adaptive_Frequency_Oscillator')
 
-    sampling_frequency= 10
-    rate=rospy.Rate(sampling_frequency)
+    fs= 10
+    rate=rospy.Rate(fs)
 
     #Initialization of Motors,Encoder and LiDAR
     pub_shutdown = rospy.Publisher('/shutdown',Bool,queue_size=1)
@@ -328,8 +344,8 @@ if __name__== "__main__":
 
     sensor=Cluster()
     signal = SignalProcessor()
-    oscillator = AdaptiveFrequencyOscillator(sampling_frequency)
-    pd_controller = PDController(sampling_frequency, x_d=0)
+    oscillator = AdaptiveFrequencyOscillator(sampling_frequency=fs)
+    pid_controller = PIDController(sampling_frequency=fs, x_d=0)
     walker = WalkerController()
 
 
@@ -368,7 +384,6 @@ if __name__== "__main__":
             left,right,scissor_signal,pelvis = signal.offline_data(raw_left[0],raw_right[0],current_time,encoder_velocity)
 
             phase,cadence=oscillator.step_afo(scissor_signal)
-            feedback_velocity=pd_controller.pd_controller(pelvis)
             walker.stride_window.append(scissor_signal)
             last_stride = walker.last_stride(walker.stride_window)
 
@@ -376,7 +391,7 @@ if __name__== "__main__":
             if calibrated== False:
                 if len(signal.scissor_window) == 100:
 
-                    cal,x_d,velocity_gain= calibration.calibration(signal.right,signal.left,signal.scissor_window,sampling_frequency,signal.cal_encoder_velocity,current_omega=oscillator.omega)
+                    cal,x_d,velocity_gain= calibration.calibration(signal.right,signal.left,signal.scissor_window,fs,signal.cal_encoder_velocity,current_omega=oscillator.omega)
                     
                     if cal == True: 
                         calibrated=True
@@ -394,12 +409,29 @@ if __name__== "__main__":
                         cal_time = list(signal.true_timestamp)
 
             else:
-                if last_stride is not None and feedback_velocity is not None:
-                    velocity_command = walker.velocity_command(feedback_velocity,cadence,last_stride,velocity_gain)
+
+                if pelvis > (x_d + 0.2) or pelvis < (x_d - 0.2):
+                    feedback_velocity=pid_controller.pid_controller(pelvis,state=True)
+                    commanded_timestamps.append(current_time)
+
+                    if feedback_velocity is None and last_stride is not None:
+                        velocity_command = walker.velocity_command(cadence,last_stride,velocity_gain)
+                        pub_right_motor.publish(velocity_command)
+                        pub_left_motor.publish(velocity_command)
+                        velocity_history.append(velocity_command)
+
+                    else:
+                        velocity_history.append(feedback_velocity)
+                        pub_right_motor.publish(feedback_velocity)
+                        pub_left_motor.publish(feedback_velocity)
+
+                else:
+                    velocity_command = walker.velocity_command(cadence,last_stride,velocity_gain)
                     pub_right_motor.publish(velocity_command)
                     pub_left_motor.publish(velocity_command)
                     commanded_timestamps.append(current_time)
                     velocity_history.append(velocity_command)
+
 
 
         else:
