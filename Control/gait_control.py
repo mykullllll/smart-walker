@@ -251,7 +251,7 @@ class PIDController:
         self.beta=beta
         self.alpha=alpha
         self.dt=1/sampling_frequency
-        self.prev_error=prev_pelvis
+        self.prev_error=prev_error
         self.rsme_feedback=rsme_feedback if rsme_feedback is not None else []
         self.feedback=feedback if feedback is not None else []
         self.filtered_xdot=filtered_xdot
@@ -262,26 +262,19 @@ class PIDController:
     def pid_controller(self,pelvis,state):
         if not state:
             self.prev_error = []
-        error=self.x_d - pelvis
-        self.prev_error.append(error)
-        if self.prev_error > 10:
-            alpha = 0.1
-            try:
-            #Lowpass Filter
-                if self.prev_error is None:
-                    self.prev_error = float(error)
-                else:
-                    self.prev_error = alpha * float(error) + (1 - alpha) * float(self.prev_error)
-            except Exception:
-                self.prev_error = float(pelvis)
-            
-            i_term= self.alpha * np.trapz(self.prev_error, np.arange(len(self.prev_error)))
-            d_term = ((error - self.prev_error[-2]) / self.dt) * self.beta
-            p_term = self.k * error 
-            feedback_velocity = d_term + i_term + p_term
-            return feedback_velocity
         else:
-            return None
+            error=self.x_d - pelvis
+            self.prev_error.append(error)
+            if len(self.prev_error) > 10:
+                alpha = 0.1
+                self.prev_error = alpha * float(error) + (1 - alpha) * float(self.prev_error[-2])
+                i_term= self.alpha * np.trapz(self.prev_error, np.arange(len(self.prev_error)))
+                d_term = ((error - self.prev_error[-2]) / self.dt) * self.beta
+                p_term = self.k * error 
+                feedback_velocity = d_term + i_term + p_term
+                return feedback_velocity
+            else:
+                return None
 
         
 
@@ -410,27 +403,26 @@ if __name__== "__main__":
 
             else:
 
-                if pelvis > (x_d + 0.2) or pelvis < (x_d - 0.2):
+                while pelvis > (x_d + 0.2) or pelvis < (x_d - 0.2):
                     feedback_velocity=pid_controller.pid_controller(pelvis,state=True)
-                    commanded_timestamps.append(current_time)
-
-                    if feedback_velocity is None and last_stride is not None:
-                        velocity_command = walker.velocity_command(cadence,last_stride,velocity_gain)
-                        pub_right_motor.publish(velocity_command)
-                        pub_left_motor.publish(velocity_command)
-                        velocity_history.append(velocity_command)
-
-                    else:
-                        velocity_history.append(feedback_velocity)
-                        pub_right_motor.publish(feedback_velocity)
-                        pub_left_motor.publish(feedback_velocity)
-
-                else:
-                    velocity_command = walker.velocity_command(cadence,last_stride,velocity_gain)
-                    pub_right_motor.publish(velocity_command)
+                    velocity_command = walker.velocity_command(cadence, last_stride, velocity_gain)
+                    pub_right_motor.publish(feedback_velocity)
                     pub_left_motor.publish(velocity_command)
+
                     commanded_timestamps.append(current_time)
-                    velocity_history.append(velocity_command)
+                    velocity_history.append(feedback_velocity)
+
+
+                feedback_velocity=pid_controller.pid_controller(pelvis,state=False)
+
+                velocity_command = walker.velocity_command(cadence,last_stride,velocity_gain)
+                pub_right_motor.publish(velocity_command)
+                pub_left_motor.publish(velocity_command)
+                velocity_history.append(velocity_command)
+                commanded_timestamps.append(current_time)
+
+
+
 
 
 
@@ -463,7 +455,6 @@ if __name__== "__main__":
         
     plt.plot(commanded_timestamps, velocity_history, color='blue', label=f'Calculated Velocity')
     plt.plot(cal_time, true_velocity, color='red', linestyle='--', label=f' True Velocity During Calibration')
-    plt.plot()
 
     # Y-label goes on every graph
     plt.ylabel("velocity (m/s)")
