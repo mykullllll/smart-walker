@@ -14,7 +14,7 @@ The objectives of this project:
 # How It Works
 It's difficult to create a real time control system that uses only 2D LiDAR scans due to the low 10 Hz sampling rate, occlusion, and noise from outside LiDAR scans. Because of this, traditional frequency calculation methods like a Fast Fourier Transforms (FFT) has built in latency proportional to it's window size, and resolution is also inversely proportional to the latency shown in the equations below. For a control system that needs to walk in rhythm with a patient that has irregular pacing i.e (changes in stride length and step timing) delay in motor control can cause discomfort and potential injuries when walking. 
 
-In order to solve this I implemented an Hopf Adaptive Frequency Oscillator (AFO) that uses a coupled set of differential equations that react to every frame and converges to the frequency of any input signal over time. 
+In order to solve this I implemented an Hopf Adaptive Frequency Oscillator (AFO) that uses a coupled set of differential equations that converges to the frequency of any input signal over time. 
 
 To make sure the input signal to the AFO doesn't have unpredictable noise and is filtered in real time I used a Kalman filter to predict the next data point. 
 
@@ -34,7 +34,9 @@ In order to identify each thighs centroid DBScan was used because of it's abilit
 
 ### Hopf Adaptive Frequency Oscillator (AFO) 
 
-The Hopf Adaptive Frequency Oscillator is a coupled set of differential equations shown below that takes an outside input signal and tries to converge to the frequency of that signal. 
+The Hopf Adaptive Frequency Oscillator is a coupled set of differential equations shown below. As you run this equation over many time steps the input signal F(t) forces $\dot{\omega}$ to either speed up or slow down to match the frequency of the input signal. For a more detailed analysis of the AFO works [Hopf Adaptive Frequency Oscillator](/docs/AFO_analysis.ipynb).
+
+
 
 $$
 \begin{aligned}
@@ -69,24 +71,19 @@ $$
 > [!NOTE]
 > Show Graph of Scissor metric vs regular Input Signal
 
-
-### Kalman Filter
-
 ### Velocity Gain
 
 
-### PD Controller (Feedback Velocity)
+### PID Controller (Feedback Velocity)
 $$
 \begin{aligned}
-\ Velocity &= k (x_{signal} - x_{calibrated}) - \beta (\dot{x}) \\
+\ Velocity_{Feedback} &= k * x_{error} + \beta (\dot{x}_{error}) + \int x_{error} * dt \\
 \end{aligned}
 $$
 
 ### Velocity Command
-
 $$
 \begin{aligned}
-\ Velocity_{Feedback} &= k (x_{signal} - x_{calibrated}) - \beta (\dot{x}) \\
 \ Velocity_{AFO} &= \omega * Sampling Frequency * Stride Length * Velocity Gain \\
 \ Velocity &= Velocity_{AFO} + Velocity_{Feedback} \\
 \end{aligned}
