@@ -48,8 +48,10 @@ $$
 \end{aligned}
 $$
 
-![AFO Animation](HardwareInTheLoop/data/afo_animation.mp4)
 
+https://github.com/user-attachments/assets/7dd72901-bb62-4123-a32d-af2526f6bd0f
+
+AFO Convergence of a sinusoidal input signal. [Simulation Code](/HardwareInTheLoop/AFO_simulation.py)
 
 > [!NOTE]
 > * $\eta$ - Changes the rate of convergence of the AFO frequency to the input signal frequency
