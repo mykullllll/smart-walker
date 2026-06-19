@@ -266,8 +266,8 @@ class PIDController:
             error=self.x_d - pelvis
             self.prev_error.append(error)
             if len(self.prev_error) > 10:
-                alpha = 0.1
-                self.prev_error = alpha * float(error) + (1 - alpha) * float(self.prev_error[-2])
+                tau = 0.1
+                self.prev_error = tau * float(error) + (1 - tau) * float(self.prev_error[-2])
                 i_term= self.alpha * np.trapz(self.prev_error, np.arange(len(self.prev_error)))
                 d_term = ((error - self.prev_error[-2]) / self.dt) * self.beta
                 p_term = self.k * error 
