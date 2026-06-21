@@ -5,10 +5,11 @@ import rospy
 from scipy.signal import butter,filtfilt
 from scipy.interpolate import interp1d
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Float32, Bool, Float64
+from std_msgs.msg import Float64, Bool
+from control_system.msg import CubeMarsEncoder
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from HardwareInTheLoop import calibration 
+import calibration 
 import os
 
 colors = ['blue', 'green']  # one per file
@@ -262,6 +263,7 @@ class PIDController:
     def pid_controller(self,pelvis,state):
         if not state:
             self.prev_error = []
+            return None
         else:
             error=self.x_d - pelvis
             self.prev_error.append(error)
@@ -306,7 +308,7 @@ class WalkerController:
 
 
 encoder = None
-def odom_callback(msg:Odometry):
+def encoder_callback(msg):
     global encoder
     encoder=msg 
 
@@ -324,13 +326,16 @@ if __name__== "__main__":
 
     #Initialization of Motors,Encoder and LiDAR
     pub_shutdown = rospy.Publisher('/shutdown',Bool,queue_size=1)
-    encoder_sub=rospy.Subscriber('/odom',Odometry,odom_callback,queue_size=1)
+    rospy.sleep(1.0)
+    pub_shutdown.publish(Bool(data=True))
+    rospy.sleep(0.5)  # release motors
+    encoder_sub=rospy.Subscriber('/encoder_data',CubeMarsEncoder ,encoder_callback,queue_size=1)
     laser_scan_sub = rospy.Subscriber("/scan_legs_filtered",LaserScan,scan_callback,queue_size=1)
     rospy.sleep(1.0)
     rospy.loginfo('Motors, LiDAR, and Encoder Enabled.')
 
-    pub_right_motor = rospy.Publisher('/right_wheel_velocity', Float64, queue_size=10)
-    pub_left_motor = rospy.Publisher('/left_wheel_velocity', Float64, queue_size=10)
+    pub_right_motor = rospy.Publisher('/right_wheel_velocity', Float64, queue_size=1)
+    pub_left_motor = rospy.Publisher('/left_wheel_velocity', Float64, queue_size=1)
 
     start_time = rospy.Time.now().to_sec()
 
@@ -340,7 +345,6 @@ if __name__== "__main__":
     oscillator = AdaptiveFrequencyOscillator(sampling_frequency=fs)
     pid_controller = PIDController(sampling_frequency=fs, x_d=0)
     walker = WalkerController()
-
 
     print("=" * 50)
     input("Press enter to begin session")
@@ -357,6 +361,7 @@ if __name__== "__main__":
 
     
     while not rospy.is_shutdown():
+        print(f'Current scan: {current_scan is not None} encoder: {encoder is not None}')
         if current_scan == None:
             rate.sleep()
             continue
@@ -367,7 +372,8 @@ if __name__== "__main__":
 
 
         current_time = rospy.Time.now().to_sec() - start_time
-        encoder_velocity=encoder.twist.twist.linear.x
+        encoder_velocity=(encoder.data[1] + encoder.data[4])/2
+        #rospy.loginfo(f'encoder velocity: {encoder_velocity} m/s')
 
 
         collisions = sensor.process_scan(current_scan.angle_min,current_scan.angle_max,current_scan.angle_increment,current_scan.ranges)
@@ -381,16 +387,19 @@ if __name__== "__main__":
             last_stride = walker.last_stride(walker.stride_window)
 
 
-            if calibrated== False:
+            if calibrated == False:
                 if len(signal.scissor_window) == 100:
 
                     cal,x_d,velocity_gain= calibration.calibration(signal.right,signal.left,signal.scissor_window,fs,signal.cal_encoder_velocity,current_omega=oscillator.omega)
                     
                     if cal == True: 
+                        pub_shutdown.publish(Bool(data=False))
                         calibrated=True
                         print("Calibration complete")
                         input("Press any key to continue")
                     else:
+                        cal_velocity = list(signal.cal_encoder_velocity)
+                        cal_time = list(signal.true_timestamp)
                         signal.left.clear()
                         signal.right.clear()
                         signal.scissor_window.clear()
@@ -398,33 +407,32 @@ if __name__== "__main__":
                         signal.true_timestamp.clear()
                         cal_velocity.clear()
                         cal_time.clear()
-                        cal_velocity = list(signal.cal_encoder_velocity)
-                        cal_time = list(signal.true_timestamp)
+
 
             else:
 
-                while pelvis > (x_d + 0.2) or pelvis < (x_d - 0.2):
+                '''
+                PID Control
+                if pelvis > (x_d + 0.2) or pelvis < (x_d - 0.2):
                     feedback_velocity=pid_controller.pid_controller(pelvis,state=True)
                     velocity_command = walker.velocity_command(cadence, last_stride, velocity_gain)
-                    pub_right_motor.publish(feedback_velocity)
-                    pub_left_motor.publish(velocity_command)
-
-                    commanded_timestamps.append(current_time)
-                    velocity_history.append(feedback_velocity)
-
 
                 feedback_velocity=pid_controller.pid_controller(pelvis,state=False)
+                else:
+                '''
 
+                #AFO
+                if last_stride is None:
+                    last_stride=0.3
                 velocity_command = walker.velocity_command(cadence,last_stride,velocity_gain)
-                pub_right_motor.publish(velocity_command)
-                pub_left_motor.publish(velocity_command)
+                velocity_command= np.clip(velocity_command,0,5)
+
+                print(f'velocity command {velocity_command}')
+                pub_right_motor.publish(Float64(velocity_command))
+                pub_left_motor.publish(Float64(velocity_command))
                 velocity_history.append(velocity_command)
                 commanded_timestamps.append(current_time)
-
-
-
-
-
+                
 
         else:
             rate.sleep()
