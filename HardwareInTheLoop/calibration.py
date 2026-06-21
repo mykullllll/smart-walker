@@ -51,7 +51,7 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
     
 
 
-    if std_avg>0.5 or np.abs(current_omega-fft_freq) > 1.0:
+    if std_avg>0.5 or np.abs(current_omega-fft_freq) > 1.0 or last_stride == None:
         '''print(current_omega)
             print(std_avg)'''
         print(fft_freq)
@@ -65,5 +65,5 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
         print(fft_freq)
         print(current_omega)
         print(velocity_gain)
-        return True, x_d, velocity_gain  #Calibration Success
+        return True, x_d, velocity_gain,last_stride  #Calibration Success
     

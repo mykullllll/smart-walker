@@ -41,7 +41,7 @@ class Cluster:
         cluster=DBSCAN(eps=4e-2,min_samples=3).fit(collisions)
         labels=cluster.labels_
         unique_labels = [l for l in np.unique(labels) if l != -1]
-        print(f"Number of clusters found: {len(unique_labels)}")
+        rospy.loginfo(f"Number of clusters found: {len(unique_labels)}")
         centroids=[]
 
         #Ideal Case (2 Clusters)
@@ -62,13 +62,13 @@ class Cluster:
             if width>0.15:
                 kmeans= KMeans(n_clusters=2,n_init=10).fit(leg_points)
                 centroids = kmeans.cluster_centers_
-                print("Clumped Cluster Detected")
+                rospy.loginfo("Clumped Cluster Detected")
                 self.clump+=1
 
             
             else:
                 single_centroid=np.mean(leg_points,axis=0)
-                print("Occlusion Detected")
+                rospy.loginfo("Occlusion Detected")
                 self.width_history.append(width)
                 self.occlusion+=1
                 isoccluded=True
@@ -81,16 +81,16 @@ class Cluster:
                     dist_center_l=np.linalg.norm(single_centroid-self.prev_leg_r)
 
                     if dist_center_r > dist_center_l:
-                        print(f"Right Leg {dist_center_r} Left Leg {dist_center_l}")
+                        rospy.loginfo(f"Right Leg {dist_center_r} Left Leg {dist_center_l}")
                         return self.prev_leg_r, single_centroid, isoccluded
                     
                     else:
-                        print(f"Right Leg {single_centroid} Left Leg {self.prev_leg_l}")
+                        rospy.loginfo(f"Right Leg {single_centroid} Left Leg {self.prev_leg_l}")
                         return  single_centroid,self.prev_leg_l, isoccluded
                     
                 #If no history drop frame
                 else:
-                    return [1,0], [1,0], isoccluded
+                    return None, None, isoccluded
 
             
 
@@ -100,7 +100,7 @@ class Cluster:
                 self.noise+=1
                 return self.prev_leg_r,self.prev_leg_l,isoccluded
             else:
-                return [1,0], [1,0], isoccluded
+                return [-1,0], [-1,0], isoccluded
 
         
         if centroids[0][1]<centroids[1][1]:
@@ -119,25 +119,35 @@ class Cluster:
             self.prev_leg_r=right_leg
 
 
-        print(f"Right Leg {right_leg} Left Leg {left_leg}")
+        rospy.loginfo(f"Right Leg {right_leg} Left Leg {left_leg}")
         return left_leg,right_leg,isoccluded
         
 
     #Collision Scanner
-    def process_scan(self,angle_min,angle_max,angle_increment,ranges,angle_offset=0): 
-            collisions = []
-            for i in range(0,200):
-                #print(position)
-                #print(walker_angle)
-                if ranges[i] == float('Inf'):
-                    continue
-                if ranges[i] > self.min_dist and ranges[i] < self.max_dist:
-                    angle = angle_min + i * angle_increment + angle_offset
-                    dx = ranges[i] * np.cos(angle)
-                    dy = ranges[i] * np.sin(angle)
-                    collisions.append((dx, dy))
-            collisions=np.array(collisions)
-            return collisions
+    def process_scan(self, angle_min, angle_increment, ranges, angle_offset=0):
+        """
+        Processes LiDAR scan data to extract collision points within a specified distance range.
+
+        Args:
+            angle_min (float): The starting angle of the scan.
+            angle_increment (float): The angular distance between measurements.
+            ranges (list or np.ndarray): The distance data from the LiDAR.
+            angle_offset (float, optional): An additional angle offset to apply. Defaults to 0.
+
+        Returns:
+            np.ndarray: Array of (x, y) collision points.
+        """
+        collisions = []
+        for i in range(0, 200):
+            if ranges[i] == float('Inf'):
+                continue
+            if ranges[i] > self.min_dist and ranges[i] < self.max_dist:
+                angle = angle_min + i * angle_increment + angle_offset
+                dx = ranges[i] * np.cos(angle)
+                dy = ranges[i] * np.sin(angle)
+                collisions.append((dx, dy))
+        collisions = np.array(collisions)
+        return collisions
 
 
 
@@ -242,17 +252,15 @@ class AdaptiveFrequencyOscillator:
         return phase, cadence
         
 
-class PIDController:
+class PDController:
     """Feedback controller"""
 
-    def __init__(self,sampling_frequency,x_d,k=2,beta=2,alpha=0.2,filtered_xdot=None,prev_pelvis=None,rsme_feedback=None,feedback=None,prev_error=None):
+    def __init__(self,sampling_frequency,x_d,k_p=2,k_d=2,filtered_xdot=None,rsme_feedback=None,feedback=None,prev_error=None):
         self.sampling_frequency=sampling_frequency
         self.x_d=x_d
-        self.k=k
-        self.beta=beta
-        self.alpha=alpha
+        self.k_p=k_p
+        self.k_d=k_d
         self.dt=1/sampling_frequency
-        self.prev_error=prev_error
         self.rsme_feedback=rsme_feedback if rsme_feedback is not None else []
         self.feedback=feedback if feedback is not None else []
         self.filtered_xdot=filtered_xdot
@@ -260,7 +268,7 @@ class PIDController:
 
 
 
-    def pid_controller(self,pelvis,state):
+    def pd_controller(self,pelvis,state):
         if not state:
             self.prev_error = []
             return None
@@ -269,11 +277,10 @@ class PIDController:
             self.prev_error.append(error)
             if len(self.prev_error) > 10:
                 tau = 0.1
-                self.prev_error = tau * float(error) + (1 - tau) * float(self.prev_error[-2])
-                i_term= self.alpha * np.trapz(self.prev_error, np.arange(len(self.prev_error)))
-                d_term = ((error - self.prev_error[-2]) / self.dt) * self.beta
-                p_term = self.k * error 
-                feedback_velocity = d_term + i_term + p_term
+                filtered_error = tau * float(error) + (1 - tau) * float(self.prev_error[-2])
+                d_term = ((filtered_error - self.prev_error[-2]) / self.dt) * self.k_d
+                p_term = self.k_p * filtered_error 
+                feedback_velocity = d_term  + p_term
                 return feedback_velocity
             else:
                 return None
@@ -343,13 +350,13 @@ if __name__== "__main__":
     sensor=Cluster()
     signal = SignalProcessor()
     oscillator = AdaptiveFrequencyOscillator(sampling_frequency=fs)
-    pid_controller = PIDController(sampling_frequency=fs, x_d=0)
+    pd_controller = PDController(sampling_frequency=fs, x_d=0)
     walker = WalkerController()
 
-    print("=" * 50)
+    rospy.loginfo("=" * 50)
     input("Press enter to begin session")
-    print("Controller engaged. Please Begin Walking Calibrating Your Walking Style.")
-    print("=" * 50)
+    rospy.loginfo("Controller engaged. Please Begin Walking Calibrating Your Walking Style.")
+    rospy.loginfo("=" * 50)
 
     cal_time=[]
     cal_velocity=[]
@@ -361,7 +368,6 @@ if __name__== "__main__":
 
     
     while not rospy.is_shutdown():
-        print(f'Current scan: {current_scan is not None} encoder: {encoder is not None}')
         if current_scan == None:
             rate.sleep()
             continue
@@ -369,12 +375,13 @@ if __name__== "__main__":
         if encoder == None:
             rate.sleep()
             continue
+        
 
 
         current_time = rospy.Time.now().to_sec() - start_time
         encoder_velocity=(encoder.data[1] + encoder.data[4])/2
         #rospy.loginfo(f'encoder velocity: {encoder_velocity} m/s')
-
+        
 
         collisions = sensor.process_scan(current_scan.angle_min,current_scan.angle_max,current_scan.angle_increment,current_scan.ranges)
         raw_left,raw_right, isoccluded= sensor.cluster_find(collisions)
@@ -386,16 +393,18 @@ if __name__== "__main__":
             walker.stride_window.append(scissor_signal)
             last_stride = walker.last_stride(walker.stride_window)
 
+            feedback_velocity=pd_controller.pd_controller(pelvis,state=True)
+
+
 
             if calibrated == False:
                 if len(signal.scissor_window) == 100:
-
-                    cal,x_d,velocity_gain= calibration.calibration(signal.right,signal.left,signal.scissor_window,fs,signal.cal_encoder_velocity,current_omega=oscillator.omega)
+                    cal,x_d,velocity_gain,last_stride= calibration.calibration(signal.right,signal.left,signal.scissor_window,fs,signal.cal_encoder_velocity,current_omega=oscillator.omega)
                     
                     if cal == True: 
                         pub_shutdown.publish(Bool(data=False))
                         calibrated=True
-                        print("Calibration complete")
+                        rospy.loginfo("Calibration complete")
                         input("Press any key to continue")
                     else:
                         cal_velocity = list(signal.cal_encoder_velocity)
@@ -407,40 +416,34 @@ if __name__== "__main__":
                         signal.true_timestamp.clear()
                         cal_velocity.clear()
                         cal_time.clear()
-
-
             else:
 
-                '''
-                PID Control
-                if pelvis > (x_d + 0.2) or pelvis < (x_d - 0.2):
-                    feedback_velocity=pid_controller.pid_controller(pelvis,state=True)
-                    velocity_command = walker.velocity_command(cadence, last_stride, velocity_gain)
+                if -0.8 < pelvis < -0.6 or -0.2 < pelvis < 0:
+                    feedback_velocity=pd_controller.pd_controller(pelvis,state=True)
+                    feedforward_velocity = walker.velocity_command(cadence,last_stride,velocity_gain)
+                    velocity_command = feedback_velocity + feedforward_velocity
+                    pub_left_motor.publish(Float64(data=velocity_command))
+                    pub_right_motor.publish(Float64(data=velocity_command))
 
-                feedback_velocity=pid_controller.pid_controller(pelvis,state=False)
+                elif -0.6 < pelvis < -0.2:
+                    feedforward_velocity = walker.velocity_command(cadence,last_stride,velocity_gain)
+                    velocity_command = feedforward_velocity
+                    pub_left_motor.publish(Float64(data=velocity_command))
+                    pub_right_motor.publish(Float64(data=velocity_command))
                 else:
-                '''
-
-                #AFO
-                if last_stride is None:
-                    last_stride=0.3
-                velocity_command = walker.velocity_command(cadence,last_stride,velocity_gain)
-                velocity_command= np.clip(velocity_command,0,5)
-
-                print(f'velocity command {velocity_command}')
-                pub_right_motor.publish(Float64(velocity_command))
-                pub_left_motor.publish(Float64(velocity_command))
+                    velocity_command = 0 
+                    pub_right_motor.publish(Float64(data=0))
+                    pub_left_motor.publish(Float64(data=0))
                 velocity_history.append(velocity_command)
-                commanded_timestamps.append(current_time)
-                
-
         else:
             rate.sleep()
             continue
 
         rate.sleep()
 
-    pub_shutdown.publish(True)
+    pub_right_motor.publish(Float64(0))
+    pub_left_motor.publish(Float64(0))
+    pub_shutdown.publish(Bool(data=True))
 
 
 
@@ -450,16 +453,16 @@ if __name__== "__main__":
     velocity_history=np.array(velocity_history)
 
     #Velocity error
-    print(f"\n---Control System Gait Analysis ---")
-    print(f"Predicted mean: {np.mean(true_velocity):.3f} m/s")
-    print(f"True mean:      {np.nanmean(true_velocity):.3f} m/s")
-    print(f"True std:       {np.nanstd(true_velocity):.3f}")
+    rospy.loginfo(f"\n---Control System Gait Analysis ---")
+    rospy.loginfo(f"Predicted mean: {np.mean(true_velocity):.3f} m/s")
+    rospy.loginfo(f"True mean:      {np.nanmean(true_velocity):.3f} m/s")
+    rospy.loginfo(f"True std:       {np.nanstd(true_velocity):.3f}")
 
     start_idx=len(true_velocity)-len(velocity_history)
 
     rmse=np.sqrt(np.mean(np.square(velocity_history-true_velocity[start_idx:])))
 
-    print(f"RMSE Predicted to True Velocity:       {rmse:.3f}")
+    rospy.loginfo(f"RMSE Predicted to True Velocity:       {rmse:.3f}")
         
     plt.plot(commanded_timestamps, velocity_history, color='blue', label=f'Calculated Velocity')
     plt.plot(cal_time, true_velocity, color='red', linestyle='--', label=f' True Velocity During Calibration')

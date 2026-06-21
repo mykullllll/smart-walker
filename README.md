@@ -30,7 +30,7 @@ One caveat to the AFO is that it doesn't take into account how far the user is t
 
 ### Clustering Algorithim (DBScan)
 
-In order to identify each thighs centroid DBScan was used because of it's ability to idenity and isolate noise. Since laser scans of the thighs are close together it was important to use a small radius.
+In order to identify each thighs centroid DBscan was used over KMeans since it's immune to noise altering clustering centers. 
 
 ### Hopf Adaptive Frequency Oscillator (AFO) 
 
@@ -77,11 +77,14 @@ $$
 
 
 ### PID Controller (Feedback Velocity)
+
 $$
 \begin{aligned}
 \ Velocity_{Feedback} &= k * x_{error} + \beta (\dot{x}_{error}) + \int x_{error} * dt \\
 \end{aligned}
 $$
+
+
 
 ### Velocity Command
 $$
