@@ -255,23 +255,24 @@ class AdaptiveFrequencyOscillator:
         return phase, cadence
         
 
-class PDController:
+class Attenuation:
     """Feedback controller"""
 
-    def __init__(self,sampling_frequency,x_d,k_p=2,k_d=2,filtered_xdot=None,rsme_feedback=None,feedback=None,prev_error=None):
+    def __init__(self,sampling_frequency,x_d,rsme_feedback=None,feedback=None,prev_error=None):
         self.sampling_frequency=sampling_frequency
         self.x_d=x_d
-        self.k_p=k_p
-        self.k_d=k_d
+
         self.dt=1/sampling_frequency
         self.rsme_feedback=rsme_feedback if rsme_feedback is not None else []
         self.feedback=feedback if feedback is not None else []
-        self.filtered_xdot=filtered_xdot
         self.prev_error=prev_error if prev_error is not None else []
 
 
+    def attenuation(self,pelvis,error_max,error_min):
+        return float(np.interp(pelvis,[error_max,error_min],[0,1.0]))
 
-    def pd_controller(self,pelvis,state):
+
+'''def attenuation(self,pelvis,state):
         if not state:
             self.prev_error = []
             return None
@@ -284,10 +285,11 @@ class PDController:
                 d_term = ((filtered_error - self.prev_error[-2]) / self.dt) * self.k_d
                 p_term = self.k_p * filtered_error 
                 feedback_velocity = d_term  + p_term
+                feedback_velocity = np.clip(feedback_velocity,0,0.5)
                 return -feedback_velocity
             else:
                 return None
-
+'''
         
 
 class WalkerController:
@@ -313,7 +315,8 @@ class WalkerController:
         return None
     
     def velocity_command(self,cadence,last_stride,velocity_gain):
-        velocity_command = cadence*last_stride
+        velocity_command = cadence*last_stride*velocity_gain
+        velocity_command = np.clip(velocity_command,0,1.2)
         return velocity_command
 
 
@@ -339,26 +342,26 @@ if __name__== "__main__":
     wheel_radius=0.1143
     fs= 10
     rate=rospy.Rate(fs)
+    delta_v= 0.171
+    current_velocity=0
+    target_velocity=0
 
     #Initialization of Motors,Encoder and LiDAR
     pub_shutdown = rospy.Publisher('/shutdown',Bool,queue_size=1)
     rospy.sleep(1.0)
     pub_shutdown.publish(Bool(data=True))
-    rospy.sleep(0.5)  # release motors
     encoder_sub=rospy.Subscriber('/encoder_data',CubeMarsEncoder ,encoder_callback,queue_size=1)
     laser_scan_sub = rospy.Subscriber("/scan_legs_filtered",LaserScan,scan_callback,queue_size=1)
-    rospy.sleep(1.0)
     rospy.loginfo('Motors, LiDAR, and Encoder Enabled.')
     pub_right_motor = rospy.Publisher('/right_wheel_velocity', Float64, queue_size=1)
     pub_left_motor = rospy.Publisher('/left_wheel_velocity', Float64, queue_size=1)
-
     start_time = rospy.Time.now().to_sec()
 
 
     sensor=Cluster()
     signal = SignalProcessor()
     oscillator = AdaptiveFrequencyOscillator(sampling_frequency=fs)
-    pd_controller = PDController(sampling_frequency=fs, x_d=0)
+    attenuation = Attenuation(sampling_frequency=fs, x_d=-0.40)
     walker = WalkerController()
 
     rospy.on_shutdown(stop_motors)
@@ -410,10 +413,6 @@ if __name__== "__main__":
             walker.stride_window.append(scissor_signal)
             last_stride = walker.last_stride(walker.stride_window)
 
-            feedback_velocity=pd_controller.pd_controller(pelvis,state=True)
-
-
-
             if calibrated == False:
                 if len(signal.scissor_window) == 100:
                     cal,x_d,velocity_gain,last_stride= calibration.calibration(signal.right,signal.left,signal.scissor_window,fs,signal.cal_encoder_velocity,current_omega=oscillator.omega)
@@ -435,11 +434,11 @@ if __name__== "__main__":
                         cal_velocity.clear()
                         cal_time.clear()
             else:
-
+                
                 if -1.0 < pelvis < -0.558 or -0.254 < pelvis < 0:
-                    feedback_velocity=pd_controller.pd_controller(pelvis,state=True)
+                    attenuation_factor=attenuation.attenuation(pelvis,-1.0,-0.558)
                     feedforward_velocity = walker.velocity_command(cadence,last_stride,velocity_gain)
-                    velocity_command = feedback_velocity + feedforward_velocity
+                    velocity_command =  attenuation_factor * feedforward_velocity
                     control_state.append(1)
 
                 elif -0.558 < pelvis < -0.254:
@@ -449,10 +448,18 @@ if __name__== "__main__":
 
                 else:
                     velocity_command = 0 
-                    control_state.append(3)
+                    control_state.append(3)  
+
+                if (velocity_command - current_velocity) > delta_v :
+                    velocity_command = current_velocity + delta_v
+
+                if (velocity_command - current_velocity) < -delta_v :
+                    velocity_command = current_velocity-delta_v
+                current_velocity = velocity_command
+
 
                 velocity_command = velocity_command/wheel_radius
-                velocity_command = np.clip(velocity_command,-5,5)
+                velocity_command = np.clip(velocity_command,0,5)
                 pub_left_motor.publish(Float64(data=velocity_command))
                 pub_right_motor.publish(Float64(data=velocity_command))
                 velocity_history.append(velocity_command)
