@@ -56,7 +56,7 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
             print(std_avg)'''
         print(fft_freq)
         print("Failed Calibration")
-        return False, None, None #Calibration Failed 
+        return False, None, None, None #Calibration Failed 
     else:
         # 1. Calculate the walker's average forward speed over the last 50 frames
         avg_walker_speed = np.mean(cal_encoder_velocity[-50:])

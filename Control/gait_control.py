@@ -54,6 +54,16 @@ class Cluster:
             self.accurate+=1
 
 
+            if centroids[0][1]<centroids[1][1]:
+                left_leg=(centroids[1])
+                right_leg=(centroids[0])
+                self.prev_leg_l=left_leg
+                self.prev_leg_r=right_leg
+
+                #plt.scatter(left_leg[0],left_leg[1])
+                #plt.scatter(right_leg[0],right_leg[1])
+
+
         elif len(unique_labels)==1:
             leg_points = collisions[labels==unique_labels[0]]
 
@@ -103,14 +113,7 @@ class Cluster:
                 return [-1,0], [-1,0], isoccluded
 
         
-        if centroids[0][1]<centroids[1][1]:
-            left_leg=(centroids[1])
-            right_leg=(centroids[0])
-            self.prev_leg_l=left_leg
-            self.prev_leg_r=right_leg
 
-            #plt.scatter(left_leg[0],left_leg[1])
-            #plt.scatter(right_leg[0],right_leg[1])
         else:
             
             left_leg=(centroids[0])
@@ -139,8 +142,8 @@ class Cluster:
         """
         collisions = []
         for i in range(0, 200):
-            if ranges[i] == float('Inf'):
-                continue
+            #if ranges[i] == float('Inf'):
+                #continue
             if ranges[i] > self.min_dist and ranges[i] < self.max_dist:
                 angle = angle_min + i * angle_increment + angle_offset
                 dx = ranges[i] * np.cos(angle)
@@ -281,7 +284,7 @@ class PDController:
                 d_term = ((filtered_error - self.prev_error[-2]) / self.dt) * self.k_d
                 p_term = self.k_p * filtered_error 
                 feedback_velocity = d_term  + p_term
-                return feedback_velocity
+                return -feedback_velocity
             else:
                 return None
 
@@ -310,9 +313,15 @@ class WalkerController:
         return None
     
     def velocity_command(self,cadence,last_stride,velocity_gain):
-        velocity_command = cadence*last_stride*velocity_gain
+        velocity_command = cadence*last_stride
         return velocity_command
 
+
+def stop_motors():
+    rospy.loginfo("Shutdown initiated")
+    pub_left_motor.publish(Float64(0))
+    pub_right_motor.publish(Float64(0))
+    pub_shutdown.publish(True)
 
 encoder = None
 def encoder_callback(msg):
@@ -327,7 +336,7 @@ def scan_callback(msg:LaserScan):
 
 if __name__== "__main__":
     rospy.init_node('Adaptive_Frequency_Oscillator')
-
+    wheel_radius=0.1143
     fs= 10
     rate=rospy.Rate(fs)
 
@@ -340,7 +349,6 @@ if __name__== "__main__":
     laser_scan_sub = rospy.Subscriber("/scan_legs_filtered",LaserScan,scan_callback,queue_size=1)
     rospy.sleep(1.0)
     rospy.loginfo('Motors, LiDAR, and Encoder Enabled.')
-
     pub_right_motor = rospy.Publisher('/right_wheel_velocity', Float64, queue_size=1)
     pub_left_motor = rospy.Publisher('/left_wheel_velocity', Float64, queue_size=1)
 
@@ -353,6 +361,8 @@ if __name__== "__main__":
     pd_controller = PDController(sampling_frequency=fs, x_d=0)
     walker = WalkerController()
 
+    rospy.on_shutdown(stop_motors)
+
     rospy.loginfo("=" * 50)
     input("Press enter to begin session")
     rospy.loginfo("Controller engaged. Please Begin Walking Calibrating Your Walking Style.")
@@ -360,6 +370,9 @@ if __name__== "__main__":
 
     cal_time=[]
     cal_velocity=[]
+    encoder_data=[]
+    encoder_time=[]
+    control_state=[]
     calibrated=False
     velocity_gain = 1.0
 
@@ -369,21 +382,25 @@ if __name__== "__main__":
     
     while not rospy.is_shutdown():
         if current_scan == None:
+            rospy.loginfo('no scan')
             rate.sleep()
             continue
 
         if encoder == None:
+            rospy.loginfo('no encoder')
             rate.sleep()
             continue
         
 
-
+        rospy.loginfo("Calibration started")       
         current_time = rospy.Time.now().to_sec() - start_time
         encoder_velocity=(encoder.data[1] + encoder.data[4])/2
+        encoder_data.append(encoder_velocity)
+        encoder_time.append(current_time)
         #rospy.loginfo(f'encoder velocity: {encoder_velocity} m/s')
         
 
-        collisions = sensor.process_scan(current_scan.angle_min,current_scan.angle_max,current_scan.angle_increment,current_scan.ranges)
+        collisions = sensor.process_scan(current_scan.angle_min,current_scan.angle_increment,current_scan.ranges,angle_offset=0)
         raw_left,raw_right, isoccluded= sensor.cluster_find(collisions)
         if raw_left is not None and raw_right is not None and encoder_velocity is not None:
             
@@ -406,6 +423,7 @@ if __name__== "__main__":
                         calibrated=True
                         rospy.loginfo("Calibration complete")
                         input("Press any key to continue")
+                        
                     else:
                         cal_velocity = list(signal.cal_encoder_velocity)
                         cal_time = list(signal.true_timestamp)
@@ -418,31 +436,35 @@ if __name__== "__main__":
                         cal_time.clear()
             else:
 
-                if -0.8 < pelvis < -0.6 or -0.2 < pelvis < 0:
+                if -1.0 < pelvis < -0.558 or -0.254 < pelvis < 0:
                     feedback_velocity=pd_controller.pd_controller(pelvis,state=True)
                     feedforward_velocity = walker.velocity_command(cadence,last_stride,velocity_gain)
                     velocity_command = feedback_velocity + feedforward_velocity
-                    pub_left_motor.publish(Float64(data=velocity_command))
-                    pub_right_motor.publish(Float64(data=velocity_command))
+                    control_state.append(1)
 
-                elif -0.6 < pelvis < -0.2:
+                elif -0.558 < pelvis < -0.254:
                     feedforward_velocity = walker.velocity_command(cadence,last_stride,velocity_gain)
                     velocity_command = feedforward_velocity
-                    pub_left_motor.publish(Float64(data=velocity_command))
-                    pub_right_motor.publish(Float64(data=velocity_command))
+                    control_state.append(2)
+
                 else:
                     velocity_command = 0 
-                    pub_right_motor.publish(Float64(data=0))
-                    pub_left_motor.publish(Float64(data=0))
+                    control_state.append(3)
+
+                velocity_command = velocity_command/wheel_radius
+                velocity_command = np.clip(velocity_command,-5,5)
+                pub_left_motor.publish(Float64(data=velocity_command))
+                pub_right_motor.publish(Float64(data=velocity_command))
                 velocity_history.append(velocity_command)
+                commanded_timestamps.append(current_time)
         else:
             rate.sleep()
             continue
 
         rate.sleep()
 
-    pub_right_motor.publish(Float64(0))
-    pub_left_motor.publish(Float64(0))
+    pub_right_motor.publish(Float64(data=0))
+    pub_left_motor.publish(Float64(data=0))
     pub_shutdown.publish(Bool(data=True))
 
 
@@ -451,8 +473,31 @@ if __name__== "__main__":
     true_velocity=np.array(cal_velocity)
     cal_time=np.array(cal_time)
     velocity_history=np.array(velocity_history)
+    
+    
+    plt.figure(1)
+    plt.plot(commanded_timestamps, velocity_history, color='red', linestyle='--', label=f' velocity command')
+    plt.plot(encoder_time,encoder_data)
+    plt.plot(commanded_timestamps, control_state, color='purple', linestyle='--', label=f' State of control')
+    plt.ylabel("m/s")
+    plt.show()
 
-    #Velocity error
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+'''  #Velocity error
     rospy.loginfo(f"\n---Control System Gait Analysis ---")
     rospy.loginfo(f"Predicted mean: {np.mean(true_velocity):.3f} m/s")
     rospy.loginfo(f"True mean:      {np.nanmean(true_velocity):.3f} m/s")
@@ -476,3 +521,4 @@ if __name__== "__main__":
 
     plt.tight_layout() 
     plt.show()
+'''
