@@ -8,12 +8,11 @@ import numpy as np
 import calibration
 from matplotlib import pyplot as plt
 from sklearn.cluster import DBSCAN, KMeans
-from scipy.signal import butter,filtfilt
 
 colors = ['blue', 'green']  # one per file
 
 
-class Cluster:
+class Cluster:  
 
     def __init__(self,min_dist= 0.25,max_dist=2,prev_leg_r=None,prev_leg_l=None,width_history=None,accurate=0,clump=0,occlusion=0,noise=0):
         self.min_dist=min_dist
@@ -39,7 +38,7 @@ class Cluster:
         cluster=DBSCAN(eps=4e-2,min_samples=3).fit(collisions)
         labels=cluster.labels_
         unique_labels = [l for l in np.unique(labels) if l != -1]
-        self.get_logger().info(f"Number of clusters found: {len(unique_labels)}")
+        print(f"Number of clusters found: {len(unique_labels)}")
         centroids=[]
 
         #Ideal Case (2 Clusters)
@@ -52,35 +51,30 @@ class Cluster:
             self.accurate+=1
 
 
-            if centroids[0][1]<centroids[1][1]:
-                left_leg=(centroids[1])
-                right_leg=(centroids[0])
-                self.prev_leg_l=left_leg
-                self.prev_leg_r=right_leg
-
-                #plt.scatter(left_leg[0],left_leg[1])
-                #plt.scatter(right_leg[0],right_leg[1])
-
-
+        #Thighs too close together
         elif len(unique_labels)==1:
             leg_points = collisions[labels==unique_labels[0]]
-
             width = np.max(leg_points[:,1])-np.min(leg_points[:,1])
 
-            if width>0.15:
-                kmeans= KMeans(n_clusters=2,n_init=10).fit(leg_points)
-                centroids = kmeans.cluster_centers_
-                self.get_logger().info("Clumped Cluster Detected")
-                self.clump+=1
+            if width>0.30:
+                '''kmeans= KMeans(n_clusters=2,n_init=10).fit(leg_points)
+                centroids = kmeans.cluster_centers_'''            
+                left_leg = leg_points[:len(leg_points)//2]
+                right_leg = leg_points[len(leg_points)//2:]
 
-            
+                centroids.append(np.mean(left_leg,axis=0))
+                centroids.append(np.mean(right_leg,axis=0))
+
+                print(f"Clumped Cluster Detected Right leg:{right_leg} Left Leg:{left_leg}")
+
+
+        #Occlusion
             else:
                 single_centroid=np.mean(leg_points,axis=0)
-                self.get_logger().info("Occlusion Detected")
+                print("Occlusion Detected")
                 self.width_history.append(width)
                 self.occlusion+=1
                 isoccluded=True
-                
                 
                 #Check which leg current cluster corresponds to
                 if self.prev_leg_l is not None and self.prev_leg_r is not None:
@@ -89,38 +83,43 @@ class Cluster:
                     dist_center_l=np.linalg.norm(single_centroid-self.prev_leg_r)
 
                     if dist_center_r > dist_center_l:
-                        self.get_logger().info(f"Right Leg {dist_center_r} Left Leg {dist_center_l}")
-                        return self.prev_leg_r, single_centroid, isoccluded
+                        print(f"Right leg occluded: Right Leg {dist_center_r} Left Leg {dist_center_l}")
+                        return  single_centroid, self.prev_leg_r, isoccluded
                     
                     else:
-                        self.get_logger().info(f"Right Leg {single_centroid} Left Leg {self.prev_leg_l}")
-                        return  single_centroid,self.prev_leg_l, isoccluded
+                        print(f"Left Leg Occluded: Right Leg {single_centroid} Left Leg {self.prev_leg_l}")
+                        return  self.prev_leg_l,single_centroid, isoccluded
                     
                 #If no history drop frame
                 else:
                     return None, None, isoccluded
 
-            
 
         if len (unique_labels)>2:
 
             if self.prev_leg_l is not None and self.prev_leg_r is not None:
                 self.noise+=1
-                return self.prev_leg_r,self.prev_leg_l,isoccluded
+                return self.prev_leg_l,self.prev_leg_r,isoccluded
             else:
                 return [-1,0], [-1,0], isoccluded
 
         
 
         else:
-            
-            left_leg=(centroids[0])
-            right_leg=(centroids[1])
-            self.prev_leg_l=left_leg
-            self.prev_leg_r=right_leg
+            if centroids[0][1]<centroids[1][1]:
+                left_leg=(centroids[1])
+                right_leg=(centroids[0])
+                self.prev_leg_l=left_leg
+                self.prev_leg_r=right_leg
+
+            else:  
+                left_leg=(centroids[0])
+                right_leg=(centroids[1])
+                self.prev_leg_l=left_leg
+                self.prev_leg_r=right_leg
 
 
-        self.get_logger().info(f"Right Leg {right_leg} Left Leg {left_leg}")
+        print(f"Right Leg {right_leg} Left Leg {left_leg}")
         return left_leg,right_leg,isoccluded
         
 
@@ -157,8 +156,8 @@ class SignalProcessor:
     def __init__(self,cal_window=None,scissor_window=None,right=None,left=None,encoder_velocity=None,true_timestamp=None,stride_window=None,avg_position_history=None,cal_encoder_velocity=None,prev_scissor=0,prev_avg=0,prev_left=0,prev_right=0):
         self.cal_window = cal_window if cal_window is not None else []
         self.scissor_window=scissor_window if scissor_window is not None else []
-        right=right if right is not None else []
-        left=left if left is not None else []
+        self.right=right if right is not None else []
+        self.left=left if left is not None else []
         self.stride_window= stride_window if stride_window is not None else []
         self.encoder_velocity=encoder_velocity if encoder_velocity is not None else []
         self.true_timestamp=true_timestamp if true_timestamp is not None else []
@@ -170,11 +169,11 @@ class SignalProcessor:
         self.prev_left=prev_left
         self.prev_right=prev_right
 
-    def lowpass_filter(self,data,cutoff,fs,order=4):
+    '''def lowpass_filter(self,data,cutoff,fs,order=4):
             nyq = 0.5 * fs
             normal_cutoff = cutoff / nyq
             b, a = butter(order, normal_cutoff, btype='low')
-            return filtfilt(b, a, data)
+            return filtfilt(b, a, data)'''
 
 
     def offline_data(self,left_current,right_current,time,encoder):
@@ -246,31 +245,23 @@ class AdaptiveFrequencyOscillator:
 
         self.omega= np.clip(self.omega + omegadot * self.dt,0.3,10.0)
 
-
         phase = ((np.arctan2(self.y,self.x)) /(2*np.pi)) % 1.0
         cadence=self.omega/(2*np.pi)
 
         return phase, cadence
         
 
-class Attenuation:
-    """Feedback controller"""
 
-    def __init__(self,sampling_frequency,x_d,rsme_feedback=None,feedback=None,prev_error=None):
-        self.sampling_frequency=sampling_frequency
-        self.x_d=x_d
-
-        self.dt=1/sampling_frequency
-        self.rsme_feedback=rsme_feedback if rsme_feedback is not None else []
-        self.feedback=feedback if feedback is not None else []
-        self.prev_error=prev_error if prev_error is not None else []
+# --- Returns a value between 0 and 1 given a pelvis value between error max and error min --- 
+def attenuation(pelvis,error_max,error_min):
+    return float(np.interp(pelvis,[error_max,error_min],[0,1.0]))
 
 
-    def attenuation(self,pelvis,error_max,error_min):
-        return float(np.interp(pelvis,[error_max,error_min],[0,1.0]))
+'''
+class PID:
 
 
-'''def attenuation(self,pelvis,state):
+def pid(self,pelvis,state):
         if not state:
             self.prev_error = []
             return None
@@ -339,8 +330,9 @@ class walker_control_node(Node):
         #1 Physics Parameters
         self.wheel_radius=0.1143
         self.fs= 10
-        self.delta_v= 0.171
+        self.delta_v= 0.3/self.wheel_radius
         self.current_velocity=0
+        self.prev_cadence = 1.0
 
         self.current_scan = None
         self.encoder = None
@@ -350,7 +342,6 @@ class walker_control_node(Node):
         self.sensor = Cluster()
         self.signal = SignalProcessor()
         self.oscillator = AdaptiveFrequencyOscillator(sampling_frequency=self.fs)
-        self.attenuation = Attenuation(sampling_frequency=self.fs, x_d=-0.40)
         self.walker = WalkerController()
 
         # 3. Publishers
@@ -402,16 +393,24 @@ class walker_control_node(Node):
 
         collisions = self.sensor.process_scan(self.current_scan.angle_min,self.current_scan.angle_increment,self.current_scan.ranges,0)
         raw_left, raw_right, isoccluded= self.sensor.cluster_find(collisions)
-        if raw_left is not None and raw_right is not None and self.encoder_velocity is not None:
+        if raw_left is not None and raw_right is not None and encoder_velocity is not None:
             
-            left,right,scissor_signal,pelvis = self.signal.offline_data(self.raw_left[0],self.raw_right[0],current_time,encoder_velocity)
-            self.phase,self.cadence= self.oscillator.step_afo(scissor_signal)
+            left,right,scissor_signal,pelvis = self.signal.offline_data(raw_left[0],raw_right[0],current_time,encoder_velocity)
+
+            if isoccluded == True:
+                self.phase,self.prev_cadence= self.oscillator.step_afo(scissor_signal)
+            else:
+                self.phase,self.cadence= self.oscillator.step_afo(scissor_signal)
+
+            if self.cadence is not None:
+                self.prev_cadence = self.cadence
+
             self.walker.stride_window.append(scissor_signal)
-            last_stride = self.walker.last_stride(self.walker.stride_window)
+            self.last_stride = self.walker.last_stride(self.walker.stride_window)
 
             if not self.calibrated:
                 if len(self.signal.scissor_window) == 100:
-                    self.cal,self.x_d,self.velocity_gain,self.last_stride= calibration.calibration(self.signal.right,self.signal.left,self.signal.scissor_window,self.fs,self.signal.cal_encoder_velocity,current_omega=self.oscillator.omega)
+                    self.cal,self.x_d,self.velocity_gain,self.cal_stride= calibration.calibration(self.signal.right,self.signal.left,self.signal.scissor_window,self.fs,self.signal.cal_encoder_velocity,current_omega=self.oscillator.omega)
                     
                     if self.cal == True: 
                         self.calibrated=True
@@ -428,15 +427,25 @@ class walker_control_node(Node):
                         self.cal_velocity.clear()
                         self.cal_time.clear()
             else:
+
+                if self.last_stride == None:
+                    feedforward_velocity = self.walker.velocity_command(self.cadence,self.cal_stride,self.velocity_gain)
+                else:
+                    feedforward_velocity = self.walker.velocity_command(self.cadence,self.last_stride,self.velocity_gain) 
                 
-                if -1.0 < pelvis < -0.558 or -0.254 < pelvis < 0:
-                    attenuation_factor=self.attenuation.attenuation(pelvis,-1.0,-0.558)
-                    feedforward_velocity = self.walker.velocity_command(self.cadence,self.last_stride,self.velocity_gain)
+
+                if -1.0 < pelvis < -0.558:
+                    attenuation_factor=attenuation(pelvis,-1.0,-0.558)
+                    velocity_command =  attenuation_factor * feedforward_velocity
+                    self.control_state.append(1)
+
+                elif -0.254 < pelvis < 0:
+                    attenuation_factor=attenuation(pelvis,-0.254,0) 
+
                     velocity_command =  attenuation_factor * feedforward_velocity
                     self.control_state.append(1)
 
                 elif -0.558 < pelvis < -0.254:
-                    feedforward_velocity = self.walker.velocity_command(self.cadence,last_stride,self.velocity_gain)
                     velocity_command = feedforward_velocity
                     self.control_state.append(2)
 
@@ -444,19 +453,20 @@ class walker_control_node(Node):
                     velocity_command = 0 
                     self.control_state.append(3)  
 
-                if (velocity_command - self.current_velocity) > self.delta_v :
-                    velocity_command = self.current_velocity + self.delta_v
+                wheel_velocity = velocity_command/self.wheel_radius
+                wheel_velocity = np.clip(wheel_velocity,0,(3/self.wheel_radius))
+                if (wheel_velocity - self.current_velocity) > self.delta_v :
+                    wheel_velocity = self.current_velocity + self.delta_v
 
-                if (velocity_command - self.current_velocity) < -self.delta_v :
-                    velocity_command = self.current_velocity-self.delta_v
-                self.current_velocity = velocity_command
+                elif (wheel_velocity - self.current_velocity) < -self.delta_v :
+                    wheel_velocity = self.current_velocity-self.delta_v
 
+                self.current_velocity = wheel_velocity
 
-                velocity_command = velocity_command/self.wheel_radius
-                velocity_command = np.clip(velocity_command,0,5)
-                self.pub_left_motor.publish(Float64(data=velocity_command))
-                self.pub_right_motor.publish(Float64(data=velocity_command))
-                self.velocity_history.append(velocity_command)
+                #self.pub_left_motor.publish(Float64(data=wheel_velocity))
+                #self.pub_right_motor.publish(Float64(data=wheel_velocity))
+
+                self.velocity_history.append(wheel_velocity)
                 self.commanded_timestamps.append(current_time)
 
 
@@ -478,9 +488,9 @@ def main(args=None):
         if len(walker_node.commanded_timestamps) > 0:
 
             plt.figure(1)
-            plt.plot(walker_control_node.commanded_timestamps, walker_control_node.velocity_history, color='red', linestyle='--', label=f' velocity command')
-            plt.plot(walker_control_node.encoder_time,walker_control_node.encoder_data)
-            plt.plot(walker_control_node.commanded_timestamps, walker_control_node.control_state, color='purple', linestyle='--', label=f' State of control')
+            plt.plot(walker_node.commanded_timestamps, walker_node.velocity_history, color='red', linestyle='--', label=f' velocity command')
+            plt.plot(walker_node.encoder_time,walker_node.encoder_data)
+            plt.plot(walker_node.commanded_timestamps, walker_node.control_state, color='purple', linestyle='--', label=f' State of control')
             plt.ylabel("m/s")
             plt.show()
 
@@ -489,46 +499,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
-
-
-
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-'''  #Velocity error
-        rospy.loginfo(f"\n---Control System Gait Analysis ---")
-        rospy.loginfo(f"Predicted mean: {np.mean(true_velocity):.3f} m/s")
-        rospy.loginfo(f"True mean:      {np.nanmean(true_velocity):.3f} m/s")
-        rospy.loginfo(f"True std:       {np.nanstd(true_velocity):.3f}")
-
-        start_idx=len(true_velocity)-len(velocity_history)
-
-        rmse=np.sqrt(np.mean(np.square(velocity_history-true_velocity[start_idx:])))
-
-        rospy.loginfo(f"RMSE Predicted to True Velocity:       {rmse:.3f}")
-            
-        plt.plot(commanded_timestamps, velocity_history, color='blue', label=f'Calculated Velocity')
-        plt.plot(cal_time, true_velocity, color='red', linestyle='--', label=f' True Velocity During Calibration')
-
-        # Y-label goes on every graph
-        plt.ylabel("velocity (m/s)")
-        plt.legend(loc="upper right")
-        plt.ylim(-0.5, 2.0)
-
-        plt.xlabel("time (s)")
-
-        plt.tight_layout() 
-        plt.show()
-    '''
