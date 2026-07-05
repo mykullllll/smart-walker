@@ -302,7 +302,7 @@ class main_loop:
         if left_x is not None and right_x is not None and encoder_velocity is not None:
             left,right,scissor_signal,pelvis = self.signal.offline_data(left_x,right_x,current_time,encoder_velocity)
             print(f'scissor window : {len(self.signal.scissor_window)} , calibrated: {self.calibrated}')
-            self.encoder_data.append(encoder_velocity/self.wheel_radius)
+            self.encoder_data.append(encoder_velocity)
             self.encoder_time.append(current_time)
 
             if isoccluded == True:
@@ -324,9 +324,9 @@ class main_loop:
                         self.calibrated=True
                         print("Calibration complete")
                         self.cadence = self.raw_frequency
-                        self.prev_cadence = self.cadence
-
-
+                        self.prev_cadence = self.raw_frequency
+                        self.oscillator.omega = 2 * np.pi * self.raw_frequency
+                        
                     else:
                         self.cal_velocity = list(self.signal.cal_encoder_velocity)
                         self.cal_time = list(self.signal.true_timestamp)

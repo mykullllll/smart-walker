@@ -6,6 +6,7 @@ from sensor_msgs.msg import LaserScan
 from sensor_msgs.msg import JointState
 from matplotlib import pyplot as plt
 from AFO import (Cluster,main_loop)
+import numpy as np
 
 '''class PID:
 
@@ -109,7 +110,25 @@ def main(args=None):
 
         if hasattr(walker_node, 'main') and len(walker_node.main.commanded_timestamps) > 0:
 
+            velocity_history = np.array(main_loop.velocity_history)
+            encoder_velocity = np.array(main_loop.encoder_data)
+
+            start_idx=len(main_loop.encoder_data)-len(main_loop.velocity_history)
+            error=velocity_history - encoder_velocity[start_idx:]
+            mean_error=np.mean(error)
+            mae = np.mean(np.abs(error))
+            rmse = np.sqrt(np.mean(np.square(error)))
+            command_std = np.std(velocity_history)
+
             print("\n Generating Post-Run Gait Calibration Plots...")
+
+            print(f"Predicted mean: {np.mean(main_loop.velocity_history):.3f} rad/s")
+            print(f"True mean:      {np.nanmean(main_loop.encoder_data):.3f} rad/s")
+            print(f"RMSE Predicted to True Velocity:       {rmse:.3f}")
+            print(f'Mean error: {mean_error} --- Negative : missing low --- Positive : missing high ---')
+            print(f'Mean error absolute {mae}')
+            print(f'Standard Deviation of commanded velocity {command_std}')
+
             plt.figure(1)
             
             # FIXED NAMESPACES: Pointing consistently to your main control object attributes

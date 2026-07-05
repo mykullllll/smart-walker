@@ -57,7 +57,7 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
 
     peak_times=peak_scissor/sampling_frequency
     periods=np.diff(peak_times)
-    avg_period=np.mean(periods)
+    avg_period=np.median(periods)
     raw_frequency=1/avg_period
 
     encoder_velocity = np.mean(cal_encoder_velocity[-50:])* wheel_radius
@@ -82,7 +82,7 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
     if velocity_gain < 1 or velocity_gain > 20:
         print(f'Velocity Gain {velocity_gain} out of range')
         print(f'calibration failed')
-        return False, None, None, None #Calibration Failed 
+        return False, None, None, None,None #Calibration Failed 
     else:
         # 1. Calculate the walker's average forward speed over the last 50 frames
         x_d = (np.mean(right[-50:])+np.mean(left[-50:]))/2
