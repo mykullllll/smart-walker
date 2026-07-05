@@ -20,17 +20,22 @@ from scipy.interpolate import interp1d
     return max_freq'''
 
 
-def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,current_omega,wheel_radius):
+def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,current_omega,wheel_radius,timestamps):
     scissor_arr=np.array(signal)
     scissor_smooth=savgol_filter(scissor_arr,window_length=5,polyorder=3)
 
     print(f'Range of peaks {np.ptp(scissor_smooth)}')
-
     peak_scissor,_= find_peaks(scissor_smooth,prominence=0.4 *np.ptp(scissor_smooth))
     valley_scissor,_= find_peaks(-scissor_smooth,prominence=0.4*np.ptp(scissor_smooth))
     print(f'Found {len(peak_scissor)} peaks and {len(valley_scissor)} valleys')
 
+    encoder_timestamps=timestamps
+    cycle_gains=[]
+    cycle_freqs=[]
     normalized_smooth=[]
+    cal_encoder_velocity=np.asarray(cal_encoder_velocity,dtype=float)
+    timestamps=np.asarray(timestamps,dtype=float)
+
     for index in range(len(peak_scissor)-1):
         start_idx=peak_scissor[index]
         end_idx=peak_scissor[index+1]
@@ -40,11 +45,34 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
         normalized_time=np.linspace(0,1,100) #Need to change this to (start_time:end_time,100)
         stretched_step1= interp_r(normalized_time)
         normalized_smooth.append(stretched_step1)
-    
-    print(f'Normalized Smooth Shape {len(normalized_smooth)}')
-    if len(normalized_smooth) < 2:
-        print(f'Failed Calibration Found {len(peak_scissor)} peaks need at leastr 2 peaks')
-        return False, None, None, None, None #Calibration Failed
+
+
+        start_time=timestamps[start_idx]
+        end_time=timestamps[end_idx]
+        encoder_timestamps=timestamps
+
+        cycle_period=end_time-start_time
+        cycle_frequency=1/cycle_period
+        cycle_freqs.append(cycle_frequency)
+        
+        mask = (encoder_timestamps>=start_time) & (encoder_timestamps<end_time)
+        if not np.any(mask):
+            print(f'No encoder data found for step {index}')
+            continue
+
+        cycle_stride=np.ptp(step_data)
+        cycle_encoder_velocity = np.mean(cal_encoder_velocity[mask]) * wheel_radius
+        cycle_raw_speed = cycle_frequency * cycle_stride
+        cycle_gain = cycle_encoder_velocity / (cycle_raw_speed + 1e-6)
+        cycle_gains.append(cycle_gain)
+
+
+    if len(cycle_gains)<2:
+        return False, None, None, None, None
+    velocity_gain = np.mean(cycle_gains)
+    raw_frequency=np.mean(cycle_freqs)
+
+
 
     normalized_smooth=np.array(normalized_smooth)
     gold_cycle=np.mean(normalized_smooth,axis=0)
@@ -52,34 +80,22 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
     std_avg=np.mean(std)
     last_stride=np.ptp(gold_cycle)
 
-    ''' fft_freq_hz=np.clip(leg_frequency(scissor_smooth,sampling_frequency),0.3,3)
-    fft_freq=fft_freq_hz*(2*np.pi)'''
 
-    peak_times=peak_scissor/sampling_frequency
-    periods=np.diff(peak_times)
-    avg_period=np.median(periods)
-    raw_frequency=1/avg_period
+    print(f'Velocity Gain: {velocity_gain}')
 
-    encoder_velocity = np.mean(cal_encoder_velocity[-50:])* wheel_radius
-    afo_frequency =  current_omega / (2 * np.pi)
-    raw_predicted_speed = (raw_frequency * last_stride )
-
-
-    print(f'raw_frequency {raw_frequency}, last_stride {last_stride}, afo_frequency {afo_frequency}, raw_predicted_speed {raw_predicted_speed}, encoder_velocity {encoder_velocity}')
-    print(f'Standard deviation average: {std_avg}')
-
-
+    if len(normalized_smooth) < 2:
+        print(f'Failed Calibration Found {len(peak_scissor)} peaks need at least 2 peaks')
+        return False, None, None, None, None #Calibration Failed
     
-    if std_avg>0.5  or last_stride is None or last_stride<0.05 or encoder_velocity < 0.05:
+
+    if std_avg>0.5  or last_stride is None or last_stride<0.05:
         print(f'Standard deviation average {std_avg}')
         print(f'Current Omega {current_omega}')
         print("Failed Calibration")
         print(f' Current Velocity AFO {current_omega}')
-        print(f' Velocity Encoder {encoder_velocity}')
         return False, None, None, None, None #Calibration Failed 
-    velocity_gain = encoder_velocity / (raw_predicted_speed +1e-6)
-    print(f'Velocity Gain {velocity_gain}')
-    if velocity_gain < 1 or velocity_gain > 20:
+    
+    if not np.isfinite(velocity_gain) or velocity_gain <= 0 or velocity_gain > 10:        
         print(f'Velocity Gain {velocity_gain} out of range')
         print(f'calibration failed')
         return False, None, None, None,None #Calibration Failed 

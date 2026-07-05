@@ -69,12 +69,12 @@ class walker_control_node(Node):
 
     #The Control Loop Timer (Replaces the while loop)
     def control_loop_callback(self):
-        if self.current_scan == None:
+        if self.current_scan is None:
             self.get_logger().info("no scan")
             return
         
-        if self.encoder == None:
-            self.get_logger().info("no scan")
+        if self.encoder is None:
+            self.get_logger().info("no encoder data")
             return
         self.encoder_velocity = (self.encoder.velocity[0] + self.encoder.velocity[1]) / 2.0
         self.current_time = (self.get_clock().now().nanoseconds / 1e9) - self.start_time
@@ -110,10 +110,10 @@ def main(args=None):
 
         if hasattr(walker_node, 'main') and len(walker_node.main.commanded_timestamps) > 0:
 
-            velocity_history = np.array(main_loop.velocity_history)
-            encoder_velocity = np.array(main_loop.encoder_data)
+            velocity_history = np.array(walker_node.main.velocity_history)
+            encoder_velocity = np.array(walker_node.main.encoder_data)
 
-            start_idx=len(main_loop.encoder_data)-len(main_loop.velocity_history)
+            start_idx=len(walker_node.main.encoder_data)-len(walker_node.main.velocity_history)
             error=velocity_history - encoder_velocity[start_idx:]
             mean_error=np.mean(error)
             mae = np.mean(np.abs(error))
@@ -122,8 +122,8 @@ def main(args=None):
 
             print("\n Generating Post-Run Gait Calibration Plots...")
 
-            print(f"Predicted mean: {np.mean(main_loop.velocity_history):.3f} rad/s")
-            print(f"True mean:      {np.nanmean(main_loop.encoder_data):.3f} rad/s")
+            print(f"Predicted mean: {np.mean(walker_node.main.velocity_history):.3f} rad/s")
+            print(f"True mean:      {np.nanmean(walker_node.main.encoder_data):.3f} rad/s")
             print(f"RMSE Predicted to True Velocity:       {rmse:.3f}")
             print(f'Mean error: {mean_error} --- Negative : missing low --- Positive : missing high ---')
             print(f'Mean error absolute {mae}')

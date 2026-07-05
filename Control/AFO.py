@@ -246,26 +246,38 @@ class Cluster:
     def process_scan(self, angle_min, angle_increment, ranges, angle_offset=0):
         """
         Processes LiDAR scan data to extract collision points within a specified distance range.
-
-        Args:
-            angle_min (float): The starting angle of the scan.
-            angle_increment (float): The angular distance between measurements.
-            ranges (list or np.ndarray): The distance data from the LiDAR.
-            angle_offset (float, optional): An additional angle offset to apply. Defaults to 0.
-
-        Returns:
-            np.ndarray: Array of (x, y) collision points.
+        Vectorized for high-speed robotics execution.
         """
-        collisions = []
-        for i in range(0, 200):
-            #if ranges[i] == float('Inf'):
-                #continue
-            if ranges[i] > self.min_dist and ranges[i] < self.max_dist:
-                angle = angle_min + i * angle_increment + angle_offset
-                dx = ranges[i] * np.cos(angle)
-                dy = ranges[i] * np.sin(angle)
-                collisions.append((dx, dy))
-        collisions = np.array(collisions)
+        # 1. Convert to numpy array dynamically if it isn't already
+        ranges = np.asarray(ranges)
+        
+        # 2. Dynamically calculate all angles across the entire array (No hardcoding!)
+        angles = angle_min + np.arange(len(ranges)) * angle_increment + angle_offset
+        
+        # 3. Create a strict boolean mask to isolate valid leg points
+        # Strips out NaNs, Infs, and enforces your distance boundaries
+        valid_mask = (
+            np.isfinite(ranges) & 
+            (~np.isnan(ranges)) & 
+            (ranges > self.min_dist) & 
+            (ranges < self.max_dist)
+        )
+        
+        # 4. Extract only the valid data payloads
+        valid_ranges = ranges[valid_mask]
+        valid_angles = angles[valid_mask]
+        
+        # If no points match (e.g. empty room or out of box), return empty array safely
+        if len(valid_ranges) == 0:
+            return np.empty((0, 2))
+            
+        # 5. Vectorized Trigonometry (Calculates all X and Y coordinates instantly)
+        dx = valid_ranges * np.cos(valid_angles)
+        dy = valid_ranges * np.sin(valid_angles)
+        
+        # 6. Stack into a clean (N, 2) array of XY coordinates
+        collisions = np.column_stack((dx, dy))
+        
         return collisions
     
 class main_loop:
@@ -318,7 +330,7 @@ class main_loop:
 
             if not self.calibrated:
                 if len(self.signal.scissor_window) >= 150 and not self.calibrated:
-                    self.cal,self.x_d,self.velocity_gain,self.cal_stride,self.raw_frequency= calibration.calibration(self.signal.right,self.signal.left,self.signal.scissor_window,self.fs,self.signal.cal_encoder_velocity,current_omega=self.oscillator.omega, wheel_radius=self.wheel_radius)
+                    self.cal,self.x_d,self.velocity_gain,self.cal_stride,self.raw_frequency= calibration.calibration(self.signal.right,self.signal.left,self.signal.scissor_window,self.fs,self.signal.cal_encoder_velocity,current_omega=self.oscillator.omega, wheel_radius=self.wheel_radius,timestamps=self.signal.true_timestamp)
                     
                     if self.cal == True: 
                         self.calibrated=True
@@ -326,6 +338,7 @@ class main_loop:
                         self.cadence = self.raw_frequency
                         self.prev_cadence = self.raw_frequency
                         self.oscillator.omega = 2 * np.pi * self.raw_frequency
+                        self.cal_raw=self.raw_frequency*self.cal_stride
                         
                     else:
                         self.cal_velocity = list(self.signal.cal_encoder_velocity)
@@ -365,12 +378,14 @@ class main_loop:
 
                 wheel_velocity = linear_velocity/self.wheel_radius
                 wheel_velocity = np.clip(wheel_velocity,0,(3/self.wheel_radius))
+
                 if (wheel_velocity - self.current_velocity) > self.delta_v :
                     wheel_velocity = self.current_velocity + self.delta_v
 
                 elif (wheel_velocity - self.current_velocity) < -self.delta_v :
                     wheel_velocity = self.current_velocity-self.delta_v
-
+                
+                print(f'Velocty Comparison {self.cal_raw/(self.cadence*self.last_stride)}')
                 self.current_velocity = wheel_velocity
                 self.velocity_history.append(wheel_velocity)
                 self.commanded_timestamps.append(current_time)
