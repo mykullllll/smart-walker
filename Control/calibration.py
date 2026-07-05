@@ -67,9 +67,10 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
         cycle_gains.append(cycle_gain)
 
 
+
     if len(cycle_gains)<2:
         return False, None, None, None, None
-    velocity_gain = np.mean(cycle_gains)
+    velocity_gain = np.median(cycle_gains)
     raw_frequency=np.mean(cycle_freqs)
 
 
@@ -81,13 +82,13 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
     last_stride=np.ptp(gold_cycle)
 
 
-    print(f'Velocity Gain: {velocity_gain}')
+    print(f'Velocity Gain: {velocity_gain},Cycled Gains: {cycle_gains}, Cycled Frequencies: {cycle_freqs}, Cycled Stride: {cycle_stride}')
+    print('----- Calibration Results -----')
 
     if len(normalized_smooth) < 2:
         print(f'Failed Calibration Found {len(peak_scissor)} peaks need at least 2 peaks')
         return False, None, None, None, None #Calibration Failed
     
-
     if std_avg>0.5  or last_stride is None or last_stride<0.05:
         print(f'Standard deviation average {std_avg}')
         print(f'Current Omega {current_omega}')

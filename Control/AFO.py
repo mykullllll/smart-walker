@@ -1,7 +1,11 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from sklearn.cluster import DBSCAN, KMeans
-import calibration
+
+try:
+    from . import calibration
+except ImportError:
+    import calibration
 
 
 class SignalProcessor:
