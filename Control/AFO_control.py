@@ -3,9 +3,9 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Float64, Bool
 from sensor_msgs.msg import LaserScan
-from control_system.msg import CubeMarsEncoder
+from sensor_msgs.msg import JointState
 from matplotlib import pyplot as plt
-from AFO import (Cluster, SignalProcessor, AdaptiveFrequencyOscillator,WalkerController,main_loop)
+from AFO import (Cluster,main_loop)
 
 '''class PID:
 
@@ -46,7 +46,7 @@ class walker_control_node(Node):
         
         # 4. Subscribers (Note the QoS profile for LiDAR)
         self.create_subscription(LaserScan, '/scan_legs_filtered', self.scan_callback, qos_profile_sensor_data)
-        self.create_subscription(CubeMarsEncoder, '/encoder_data', self.encoder_callback, 1)
+        self.create_subscription(JointState, '/encoder_data', self.encoder_callback, 1)
 
         #rospy.on_shutdown(stop_motors)
 
@@ -75,7 +75,7 @@ class walker_control_node(Node):
         if self.encoder == None:
             self.get_logger().info("no scan")
             return
-        self.encoder_velocity = (self.encoder.data[1] + self.encoder.data[4]) / 2.0
+        self.encoder_velocity = (self.encoder.velocity[0] + self.encoder.velocity[1]) / 2.0
         self.current_time = (self.get_clock().now().nanoseconds / 1e9) - self.start_time
     
         collisions = self.cluster.process_scan(self.current_scan.angle_min,self.current_scan.angle_increment,self.current_scan.ranges,0) 
@@ -107,17 +107,28 @@ def main(args=None):
         walker_node.pub_left_motor.publish(stop_msg)
         walker_node.pub_right_motor.publish(stop_msg)'''
 
-        if len(walker_node.main.commanded_timestamps) > 0:
+        if hasattr(walker_node, 'main') and len(walker_node.main.commanded_timestamps) > 0:
 
+            print("\n Generating Post-Run Gait Calibration Plots...")
             plt.figure(1)
-            plt.plot(walker_node.main.commanded_timestamps, walker_node.main.velocity_history, color='red', linestyle='--', label=f' velocity command')
-            plt.plot(walker_node.main.encoder_time,walker_node.main.encoder_data)
-            plt.plot(walker_node.main.commanded_timestamps, walker_node.main.control_state, color='purple', linestyle='--', label=f' State of control')
+            
+            # FIXED NAMESPACES: Pointing consistently to your main control object attributes
+            plt.plot(walker_node.main.commanded_timestamps, walker_node.main.velocity_history, color='red', linestyle='--', label='Velocity Command')
+            plt.plot(walker_node.main.encoder_time, walker_node.main.encoder_data, color='blue', label='Encoder Data Feedback')
+            plt.plot(walker_node.main.commanded_timestamps, walker_node.main.control_state, color='purple', linestyle='--', label='State of Control')
+            
             plt.ylabel("rad/s")
-            plt.show()
+            plt.xlabel("Time (s)")
+            plt.legend()
+            plt.grid(True)
+            plt.show() # This blocks execution until you physically close the plot window
+        else:
+            print("\n No gait telemetry data was captured to plot.")
 
+        # Cleanly shut down the ROS 2 node context
         walker_node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

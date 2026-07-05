@@ -4,7 +4,6 @@ from scipy.interpolate import interp1d
 
 
 
-
 '''def leg_frequency(signal,fs):
     pad = 1024
     signal=signal-np.mean(signal)
@@ -21,11 +20,16 @@ from scipy.interpolate import interp1d
     return max_freq'''
 
 
-def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,current_omega):
+def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,current_omega,wheel_radius):
     scissor_arr=np.array(signal)
     scissor_smooth=savgol_filter(scissor_arr,window_length=5,polyorder=3)
-    peak_scissor,_= find_peaks(scissor_smooth,prominence=0.3 *np.ptp(scissor_smooth))
-    valley_scissor,_= find_peaks(-scissor_smooth,prominence=0.3*np.ptp(scissor_smooth))
+
+    print(f'Range of peaks {np.ptp(scissor_smooth)}')
+
+    peak_scissor,_= find_peaks(scissor_smooth,prominence=0.4 *np.ptp(scissor_smooth))
+    valley_scissor,_= find_peaks(-scissor_smooth,prominence=0.4*np.ptp(scissor_smooth))
+    print(f'Found {len(peak_scissor)} peaks and {len(valley_scissor)} valleys')
+
     normalized_smooth=[]
     for index in range(len(peak_scissor)-1):
         start_idx=peak_scissor[index]
@@ -36,35 +40,48 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
         normalized_time=np.linspace(0,1,100) #Need to change this to (start_time:end_time,100)
         stretched_step1= interp_r(normalized_time)
         normalized_smooth.append(stretched_step1)
-        
+    
+    print(f'Normalized Smooth Shape {len(normalized_smooth)}')
     if len(normalized_smooth) < 2:
-        return False, None, None, None
+        print(f'Failed Calibration Found {len(peak_scissor)} peaks need at leastr 2 peaks')
+        return False, None, None, None, None #Calibration Failed
 
     normalized_smooth=np.array(normalized_smooth)
     gold_cycle=np.mean(normalized_smooth,axis=0)
     std=np.std(normalized_smooth,axis=0)           
     std_avg=np.mean(std)
-
-    last_stride=np.ptp(normalized_smooth)
+    last_stride=np.ptp(gold_cycle)
 
     ''' fft_freq_hz=np.clip(leg_frequency(scissor_smooth,sampling_frequency),0.3,3)
     fft_freq=fft_freq_hz*(2*np.pi)'''
 
-    avg_walker_speed = np.mean(cal_encoder_velocity[-50:])
-    current_hz =  current_omega / (2 * np.pi)
-    raw_predicted_speed = current_hz * last_stride
+    peak_times=peak_scissor/sampling_frequency
+    periods=np.diff(peak_times)
+    avg_period=np.mean(periods)
+    raw_frequency=1/avg_period
+
+    encoder_velocity = np.mean(cal_encoder_velocity[-50:])* wheel_radius
+    afo_frequency =  current_omega / (2 * np.pi)
+    raw_predicted_speed = (raw_frequency * last_stride )
+
+
+    print(f'raw_frequency {raw_frequency}, last_stride {last_stride}, afo_frequency {afo_frequency}, raw_predicted_speed {raw_predicted_speed}, encoder_velocity {encoder_velocity}')
+    print(f'Standard deviation average: {std_avg}')
+
 
     
-    if std_avg>0.5  or last_stride is None or last_stride<0.05 or avg_walker_speed < 0.05:
+    if std_avg>0.5  or last_stride is None or last_stride<0.05 or encoder_velocity < 0.05:
         print(f'Standard deviation average {std_avg}')
         print(f'Current Omega {current_omega}')
         print("Failed Calibration")
         print(f' Current Velocity AFO {current_omega}')
-        print(f' Velocity Encoder {avg_walker_speed}')
-        return False, None, None, None #Calibration Failed 
-    velocity_gain = avg_walker_speed / (raw_predicted_speed +1e-6)
-    
-    if velocity_gain < 1 or velocity_gain > 12:
+        print(f' Velocity Encoder {encoder_velocity}')
+        return False, None, None, None, None #Calibration Failed 
+    velocity_gain = encoder_velocity / (raw_predicted_speed +1e-6)
+    print(f'Velocity Gain {velocity_gain}')
+    if velocity_gain < 1 or velocity_gain > 20:
+        print(f'Velocity Gain {velocity_gain} out of range')
+        print(f'calibration failed')
         return False, None, None, None #Calibration Failed 
     else:
         # 1. Calculate the walker's average forward speed over the last 50 frames
@@ -72,4 +89,5 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
         #print(f'FFT Frequency {fft_freq}')
         print(f' Current Velocity AFO {current_omega}')
         print(f'Velocity Gain {velocity_gain}')
-        return True, x_d, velocity_gain,last_stride  #Calibration Success
+        print('calibration successful')
+        return True, x_d, velocity_gain,last_stride, raw_frequency  #Calibration Success

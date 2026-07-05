@@ -1,7 +1,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from sklearn.cluster import DBSCAN, KMeans
-from Control import calibration
+import calibration
 
 
 class SignalProcessor:
@@ -126,6 +126,7 @@ class WalkerController:
     
     def velocity_command(self,cadence,last_stride,velocity_gain):
         velocity_command = cadence*last_stride*velocity_gain
+        print(f'Velocity Command {velocity_command}, Cadence {cadence}, Last Stride {last_stride}, Velocity Gain {velocity_gain}')
         velocity_command = np.clip(velocity_command,0,1.2)
         return velocity_command
     
@@ -300,6 +301,9 @@ class main_loop:
     def step_from_legs(self, current_time, encoder_velocity, left_x, right_x, isoccluded):
         if left_x is not None and right_x is not None and encoder_velocity is not None:
             left,right,scissor_signal,pelvis = self.signal.offline_data(left_x,right_x,current_time,encoder_velocity)
+            print(f'scissor window : {len(self.signal.scissor_window)} , calibrated: {self.calibrated}')
+            self.encoder_data.append(encoder_velocity/self.wheel_radius)
+            self.encoder_time.append(current_time)
 
             if isoccluded == True:
                 self.phase,self.prev_cadence= self.oscillator.step_afo(scissor_signal)
@@ -313,13 +317,16 @@ class main_loop:
             self.last_stride = self.walker.last_stride(self.walker.stride_window)
 
             if not self.calibrated:
-                if len(self.signal.scissor_window) == 150:
-                    self.cal,self.x_d,self.velocity_gain,self.cal_stride= calibration.calibration(self.signal.right,self.signal.left,self.signal.scissor_window,self.fs,self.signal.cal_encoder_velocity,current_omega=self.oscillator.omega)
+                if len(self.signal.scissor_window) >= 150 and not self.calibrated:
+                    self.cal,self.x_d,self.velocity_gain,self.cal_stride,self.raw_frequency= calibration.calibration(self.signal.right,self.signal.left,self.signal.scissor_window,self.fs,self.signal.cal_encoder_velocity,current_omega=self.oscillator.omega, wheel_radius=self.wheel_radius)
                     
                     if self.cal == True: 
                         self.calibrated=True
                         print("Calibration complete")
-                        
+                        self.cadence = self.raw_frequency
+                        self.prev_cadence = self.cadence
+
+
                     else:
                         self.cal_velocity = list(self.signal.cal_encoder_velocity)
                         self.cal_time = list(self.signal.true_timestamp)
@@ -367,8 +374,7 @@ class main_loop:
                 self.current_velocity = wheel_velocity
                 self.velocity_history.append(wheel_velocity)
                 self.commanded_timestamps.append(current_time)
-                self.encoder_data.append(encoder_velocity/self.wheel_radius)
-                self.encoder_time.append(current_time)
+
 
                 return wheel_velocity
                 
