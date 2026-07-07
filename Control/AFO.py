@@ -82,7 +82,7 @@ class AdaptiveFrequencyOscillator:
         self.sampling_frequency=sampling_frequency
         self.x=1.0
         self.y=0
-        self.omega=2
+        self.omega=2*np.pi*1.0
         self.dt=1/sampling_frequency
         self.eta=eta
         self.eps=eps
@@ -93,17 +93,17 @@ class AdaptiveFrequencyOscillator:
         r=np.sqrt(self.x**2 +self.y**2) + 1e-6
         xdot=(self.mu-np.square(r))*self.x - self.omega * self.y + self.eps *signal
         ydot=(self.mu-np.square(r))*self.y + self.omega * self.x
-        omegadot= (-self.eta*signal*self.y)/r
+        omegadot= (self.eta*signal*self.y)/r
 
         self.x= xdot * self.dt + self.x
         self.y=ydot * self.dt + self.y
 
-        self.omega= np.clip(self.omega + omegadot * self.dt,0.3,10.0)
+        self.omega= np.clip(self.omega + omegadot * self.dt,0.3,20.0)
 
         phase = ((np.arctan2(self.y,self.x)) /(2*np.pi)) % 1.0
         cadence=self.omega/(2*np.pi)
 
-        return phase, cadence
+        return phase, cadence, omegadot
         
 class WalkerController:
     'Velocity commands'

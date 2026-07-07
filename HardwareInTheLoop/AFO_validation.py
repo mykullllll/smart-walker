@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter, find_peaks
 from Control.AFO import AdaptiveFrequencyOscillator
+import pandas as pd
+
 
 class sig():
     def __init__ (self,dt,cycle_count=0,prev_cycle_count=0,phase=0,phase_const=0,noise=0.05,frequencies=None,amplitude_options=None):
@@ -36,21 +38,18 @@ class sig():
             self.amplitude = np.random.choice(self.amplitude_options)
             self.cycle_count = 0
             self.prev_cycle_count = 0
+            return signal,true_frequency,True
 
-        return signal,true_frequency
-
+        return signal,true_frequency,False
 
     def freq_const(self,amplitude_const,frequency_const):
-
         self.phase_const+=2*np.pi*frequency_const*self.dt
-
         signal = amplitude_const * np.sin(self.phase_const) + np.random.normal(-self.noise, self.noise)
         return signal,frequency_const
    
 class stride_validation():
     def __init__(self,stride=None):
         self.stride = stride if stride is not None else []
-
 
     def stride_ptp_validation(self,sig):
         scissor_arr=np.array(sig)
@@ -67,96 +66,170 @@ class stride_validation():
 
 
 
-fs = 10
-dt = 1/fs
-afo_variable = AdaptiveFrequencyOscillator(sampling_frequency=10,eta=2.5,eps=1.5)
-afo_constant = AdaptiveFrequencyOscillator(sampling_frequency=10,eta=2.5,eps=1.5)
+def post_calc(abs_freq_error,cadence_hist,omega_dot_history,convergence_history):
 
+    omega_dot_history = np.asarray(omega_dot_history)
+    omega_dot_history = np.mean(omega_dot_history)
 
-signal_gen = sig(dt=dt,frequencies = [0.5, 0.8, 1.1, 0.6],amplitude_options = [0.3,0.45,0.55,0.65,0.75],noise=0.05)
-val_stride = stride_validation()
-
-
-cadence_hist=[]
-abs_freq_error=[]
-true_freq_hist = []
-input_signal=[]
-
-
-cadence_hist_const=[]
-abs_freq_error_const=[]
-true_freq_hist_const = []
-input_signal_const =[]
-
-rate_convergence=None
-threshold=0.05
-convergence_tracker=0
-convergence_tracker_const=0
-rate_convergence_const=None
-
-
-
-
-for i in range(900):
-    t = i*dt
-    scissor_signal,true_freq = signal_gen.freq_step_vary()
-    scissor_signal_const, true_freq_const = signal_gen.freq_const(amplitude_const=0.5,frequency_const=0.8)
-
-    _, cadence = afo_variable.step_afo(scissor_signal)
-    _, cadence_const = afo_constant.step_afo(scissor_signal_const)
-
-    abs_freq_error.append(np.abs(true_freq-cadence))
-    cadence_hist.append(cadence)
-    input_signal.append(scissor_signal)
-    true_freq_hist.append(true_freq)
-
-    abs_freq_error_const.append(np.abs(true_freq_const-cadence_const))
-    cadence_hist_const.append(cadence_const)
-    true_freq_hist_const.append(true_freq_const)
-    input_signal_const.append(scissor_signal_const)
-
-    #Convergence Check
-    if abs(cadence - true_freq) < threshold:
-        convergence_tracker+=1
-        if convergence_tracker > 20 and rate_convergence is None:
-            rate_convergence=(t-20) * dt
-    else:
-        convergence_tracker = 0
-
-    #Convergence Check Constant, Need to change per cycle convergence
-    if abs(cadence_const - true_freq_const) < threshold:
-        convergence_tracker_const+=1
-        if convergence_tracker_const > 20 and rate_convergence_const is None:
-            rate_convergence_const=t
-    else:
-        convergence_tracker_const = 0
-
-
-def post_calc(abs_freq_error,cadence_hist):
-
+    convergence_history = np.asarray(convergence_history)
+    convergence_history = np.mean(convergence_history)
     abs_freq_error = np.asarray(abs_freq_error)
     cadence_hist = np.asarray(cadence_hist)
     max_error = np.max(abs_freq_error)
     max_error_time = np.argmax(abs_freq_error) * dt
     freq_error_avg = np.mean(abs_freq_error)
     std_cadence = np.std(cadence_hist)
-
-    return freq_error_avg,max_error,max_error_time,std_cadence
-
-val_stride_variable = stride_validation()
-val_stride_constant = stride_validation()
+    return freq_error_avg,max_error,max_error_time,std_cadence,omega_dot_history,convergence_history
 
 
-stride_history, num_of_strides =val_stride_variable.stride_ptp_validation(input_signal)
-stride_history_const, num_of_strides_const =val_stride_constant.stride_ptp_validation(input_signal_const)
+eta_eps=[]
+score=[]
+results=[]
 
-freq_error_avg,max_error,max_error_time,std_cadence= post_calc(abs_freq_error,cadence_hist)
-freq_error_avg_const,max_error_const,max_error_time_const,std_cadence_const = post_calc(abs_freq_error_const,cadence_hist_const)
+eta_values = [1.5, 2, 2.5, 3, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,10]
+eps_values = [1.5, 2, 2.5, 3, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,10]
+freq_values = [0.5, 0.6, 0.8, 1.1, 1.5, 1.7, 1.9, 2.2]
 
-print(f'----- Variable Frequency Signal Input Metrics ----')
-print(f'Convergence Time: {rate_convergence}')
-print(f'Absolute average Frequency Error: {freq_error_avg}')
-print(f'Maximum Error: {max_error} at {max_error_time}')
+
+for index_freq in freq_values:
+    for eta in eta_values:
+        for eps in eps_values:
+
+            fs = 10
+            dt = 1/fs
+
+            signal_gen = sig(dt=dt,frequencies = [0.5, 0.8, 1.1, 0.6],amplitude_options = [0.3,0.45,0.55,0.65],noise=0.0)
+            val_stride = stride_validation()
+            #val_stride_variable = stride_validation()
+            val_stride_constant = stride_validation()
+
+            cadence_hist=[]
+            abs_freq_error=[]
+            true_freq_hist = []
+            input_signal=[]
+
+
+            cadence_hist_const=[]
+            abs_freq_error_const=[]
+            true_freq_hist_const = []
+            input_signal_const =[]
+            convergence_variable_freq=[]
+            omega_dot_history_const=[]
+            convergence_history=[]
+
+            rate_convergence=None
+            threshold=0.05
+            convergence_tracker=0
+            convergence_tracker_const=0
+            segment_start_time = 0.0
+            rate_convergence_const=None
+
+
+            eta_eps.append([eta,eps]) 
+            #afo_variable = AdaptiveFrequencyOscillator(sampling_frequency=10,eta=eta,eps=eps)
+            afo_constant = AdaptiveFrequencyOscillator(sampling_frequency=10,eta=eta,eps=eps)
+
+            for i in range(900):
+                t = i*dt
+                #scissor_signal,true_freq, freq_state_change= signal_gen.freq_step_vary()
+                scissor_signal_const, true_freq_const = signal_gen.freq_const(amplitude_const=0.5,frequency_const=index_freq)
+
+                #_, cadence = afo_variable.step_afo(scissor_signal)
+                _, cadence_const,omegadot = afo_constant.step_afo(scissor_signal_const)
+                
+                abs_freq_error_const.append(np.abs(true_freq_const-cadence_const))
+                cadence_hist_const.append(cadence_const)
+                true_freq_hist_const.append(true_freq_const)
+                input_signal_const.append(scissor_signal_const)
+                omega_dot_history_const.append(omegadot)
+
+                convergence_history.append(abs(cadence_const - true_freq_const))
+                #Convergence Check Constant, Need to change per cycle convergence
+                if abs(cadence_const - true_freq_const) < threshold:
+                    convergence_tracker_const+=1
+                    if convergence_tracker_const > 20 and rate_convergence_const is None:
+                        rate_convergence_const = t - 20 * dt
+                else:
+                    convergence_tracker_const = 0
+
+            #stride_history, num_of_strides =val_stride_variable.stride_ptp_validation(input_signal)
+            stride_history_const, num_of_strides_const =val_stride_constant.stride_ptp_validation(input_signal_const)
+
+            #freq_error_avg,max_error,max_error_time,std_cadence= post_calc(abs_freq_error,cadence_hist)
+            freq_error_avg_const,max_error_const,max_error_time_const,std_cadence_const,omega_dot_history_const,convergence_history = post_calc(abs_freq_error_const,cadence_hist_const,omega_dot_history_const,convergence_history)
+
+            if rate_convergence_const is None:
+                current_score = np.inf
+            else:
+                current_score= (rate_convergence_const
+                + freq_error_avg_const
+                + max_error_const
+                + std_cadence_const)
+            
+            score.append(current_score)
+            results.append((current_score, index_freq, eta, eps, rate_convergence_const,
+                            freq_error_avg_const, max_error_const, std_cadence_const,omega_dot_history_const,convergence_history))
+
+columns = [
+    "score",
+    "freq_hz",
+    "eta",
+    "eps",
+    "convergence_s",
+    "avg_error_hz",
+    "max_error_hz",
+    "cadence_std",
+    "omega_dot average",
+    'convergence_history'
+]
+
+pd.set_option("display.max_rows", None)
+pd.set_option("display.max_columns", None)
+pd.set_option("display.width", None)
+results_table = pd.DataFrame(results, columns=columns)
+results_table = results_table.sort_values(["freq_hz"])
+top_10_per_freq = (
+    results_table
+    .sort_values(["freq_hz", "score"])
+    .groupby("freq_hz", as_index=False)
+    .head(30)
+)
+print(top_10_per_freq.round(4).to_string(index=False))
+
+'''                #Convergence Check
+                if abs(cadence - true_freq) < threshold:
+                    convergence_tracker+=1
+                    if convergence_tracker > 20 and rate_convergence is None:
+                        convergence_window=20
+                        rate_convergence=t-convergence_window * dt
+                        rate_convergence = rate_convergence - segment_start_time
+                        convergence_variable_freq.append((float(true_freq),rate_convergence))
+                        convergence_tracker=0
+                else:
+                    convergence_tracker = 0
+            
+                if freq_state_change is True:
+                    if rate_convergence is None:
+                        convergence_variable_freq.append((f"Not converged for Frequency {float(true_freq),None} "))
+                    segment_start_time = t+dt
+                    convergence_tracker=0
+                    rate_convergence=None
+
+                abs_freq_error.append(np.abs(true_freq-cadence))
+                cadence_hist.append(cadence)
+                input_signal.append(scissor_signal)
+                true_freq_hist.append(true_freq)
+'''
+
+
+
+
+
+
+'''print(f'----- Variable Frequency Signal Input Metrics ----')
+print(f'Convergence Times: {convergence_variable_freq} (s)')
+print(f'Absolute average Frequency Error: {freq_error_avg} (Hz)')
+print(f'Maximum Error: {max_error} at {max_error_time} (Hz)')
 print(f'Standard Deviation of Cadence (Smoothness): {std_cadence}')
 print(f'Number of Strides: {num_of_strides}')
 #print(f'Stride Lengths: {stride_history}')
@@ -170,7 +243,7 @@ print(f'Maximum Error: {max_error_const} at {max_error_time_const}')
 print(f'Standard Deviation of Cadence (Smoothness): {std_cadence_const}')
 print(f'Number of Strides: {num_of_strides_const}')
 #print(f'Stride Lengths: {stride_history_const}')
-
+'''
 
 
 
