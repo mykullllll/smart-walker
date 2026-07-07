@@ -40,6 +40,9 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
         start_idx=peak_scissor[index]
         end_idx=peak_scissor[index+1]
         step_data=scissor_smooth[start_idx:end_idx]
+        if len(step_data)<4:
+            continue
+        
         raw_time=np.linspace(0,1,len(step_data))
         interp_r= interp1d(raw_time,step_data,kind="cubic")
         normalized_time=np.linspace(0,1,100) #Need to change this to (start_time:end_time,100)

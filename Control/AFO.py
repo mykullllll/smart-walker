@@ -80,8 +80,8 @@ class AdaptiveFrequencyOscillator:
 
     def __init__(self,sampling_frequency,eta=0.3,eps=1.5,mu=1):
         self.sampling_frequency=sampling_frequency
-        self.x=1.0
-        self.y=0
+        self.x=0
+        self.y=1.0
         self.omega=2*np.pi*1.0
         self.dt=1/sampling_frequency
         self.eta=eta
@@ -93,7 +93,7 @@ class AdaptiveFrequencyOscillator:
         r=np.sqrt(self.x**2 +self.y**2) + 1e-6
         xdot=(self.mu-np.square(r))*self.x - self.omega * self.y + self.eps *signal
         ydot=(self.mu-np.square(r))*self.y + self.omega * self.x
-        omegadot= (self.eta*signal*self.y)/r
+        omegadot= (-self.eta*signal*self.y)/r
 
         self.x= xdot * self.dt + self.x
         self.y=ydot * self.dt + self.y
@@ -289,8 +289,9 @@ class main_loop:
         #1 Physics Parameters
         self.fs = fs
         self.wheel_radius = wheel_radius
-        self.delta_v = 0.3 / wheel_radius
-        self.current_velocity = 0        
+        self.max_accel = 0.5  #m/s^2
+        self.delta_v = (self.max_accel / self.fs) /self.wheel_radius
+        self.current_velocity = 0
         self.cadence = None
         self.prev_cadence = 1.0
 
@@ -301,7 +302,7 @@ class main_loop:
 
         #Classes
         self.signal = SignalProcessor()
-        self.oscillator = AdaptiveFrequencyOscillator(fs)
+        self.oscillator = AdaptiveFrequencyOscillator(fs,eta=5.5,eps=8.5)
         self.walker = WalkerController()
         self.cluster = Cluster()
 
@@ -313,23 +314,16 @@ class main_loop:
         self.encoder_time = []
         self.control_state = []  
 
+
+        self.afo_enabled = False
+        self.assist_ramping = False
+
     def step_from_legs(self, current_time, encoder_velocity, left_x, right_x, isoccluded):
         if left_x is not None and right_x is not None and encoder_velocity is not None:
             left,right,scissor_signal,pelvis = self.signal.offline_data(left_x,right_x,current_time,encoder_velocity)
             print(f'scissor window : {len(self.signal.scissor_window)} , calibrated: {self.calibrated}')
             self.encoder_data.append(encoder_velocity)
             self.encoder_time.append(current_time)
-
-            if isoccluded == True:
-                self.phase,self.prev_cadence= self.oscillator.step_afo(scissor_signal)
-            else:
-                self.phase,self.cadence= self.oscillator.step_afo(scissor_signal)
-
-            if self.cadence is not None:
-                self.prev_cadence = self.cadence
-
-            self.walker.stride_window.append(scissor_signal)
-            self.last_stride = self.walker.last_stride(self.walker.stride_window)
 
             if not self.calibrated:
                 if len(self.signal.scissor_window) >= 150 and not self.calibrated:
@@ -342,6 +336,11 @@ class main_loop:
                         self.prev_cadence = self.raw_frequency
                         self.oscillator.omega = 2 * np.pi * self.raw_frequency
                         self.cal_raw=self.raw_frequency*self.cal_stride
+
+
+                        self.assist_ramping = True
+                        self.afo_enabled = False
+                        self.current_velocity = 0
                         
                     else:
                         self.cal_velocity = list(self.signal.cal_encoder_velocity)
@@ -353,48 +352,76 @@ class main_loop:
                         self.signal.true_timestamp.clear()
                         self.cal_velocity.clear()
                         self.cal_time.clear()
+                        self.walker.stride_window.clear()
+                        self.walker.stride_history.clear()
                 return None
+            
+            if self.afo_enabled:
+                if isoccluded == True:
+                    self.phase,self.prev_cadence,_= self.oscillator.step_afo(scissor_signal)
+                else:
+                    self.phase,self.cadence,_= self.oscillator.step_afo(scissor_signal)
+                    self.prev_cadence = self.cadence
             else:
-                if self.last_stride == None:
-                    feedforward_velocity = self.walker.velocity_command(self.cadence,self.cal_stride,self.velocity_gain)
-                else:
-                    feedforward_velocity = self.walker.velocity_command(self.cadence,self.last_stride,self.velocity_gain) 
+                self.cadence=self.raw_frequency
 
-                if -1.0 < pelvis < -0.558:
-                    attenuation_factor=attenuation(pelvis,-1.0,-0.558)
-                    linear_velocity =  attenuation_factor * feedforward_velocity
-                    self.control_state.append(1)
-
-                elif -0.254 < pelvis < 0:
-                    attenuation_factor=attenuation(pelvis,-0.254,0) 
-
-                    linear_velocity =  attenuation_factor * feedforward_velocity
-                    self.control_state.append(1)
-
-                elif -0.558 < pelvis < -0.254:
-                    linear_velocity = feedforward_velocity
-                    self.control_state.append(2)
-
-                else:
-                    linear_velocity = 0 
-                    self.control_state.append(3)  
-
-                wheel_velocity = linear_velocity/self.wheel_radius
-                wheel_velocity = np.clip(wheel_velocity,0,(3/self.wheel_radius))
-
-                if (wheel_velocity - self.current_velocity) > self.delta_v :
-                    wheel_velocity = self.current_velocity + self.delta_v
-
-                elif (wheel_velocity - self.current_velocity) < -self.delta_v :
-                    wheel_velocity = self.current_velocity-self.delta_v
-                
-                print(f'Velocty Comparison {self.cal_raw/(self.cadence*self.last_stride)}')
-                self.current_velocity = wheel_velocity
-                self.velocity_history.append(wheel_velocity)
-                self.commanded_timestamps.append(current_time)
+            self.walker.stride_window.append(scissor_signal)
+            self.last_stride = self.walker.last_stride(self.walker.stride_window)
 
 
-                return wheel_velocity
+            #Velocity Calculation / Commands
+            if self.last_stride == None:
+                feedforward_velocity = self.walker.velocity_command(self.cadence,self.cal_stride,self.velocity_gain)
+            else:
+                feedforward_velocity = self.walker.velocity_command(self.cadence,self.last_stride,self.velocity_gain) 
+
+            if -1.0 < pelvis < -0.558:
+                attenuation_factor=attenuation(pelvis,-1.0,-0.558)
+                linear_velocity =  attenuation_factor * feedforward_velocity
+                self.control_state.append(1)
+
+            elif -0.254 < pelvis < 0:
+                attenuation_factor=attenuation(pelvis,-0.254,0) 
+
+                linear_velocity =  attenuation_factor * feedforward_velocity
+                self.control_state.append(1)
+
+            elif -0.558 < pelvis < -0.254:
+                linear_velocity = feedforward_velocity
+                self.control_state.append(2)
+
+            else:
+                linear_velocity = 0 
+                self.control_state.append(3)  
+
+            #Wheel Velcoity Ramping/Attenuation/Smoothing
+            target_wheel_velocity = linear_velocity / self.wheel_radius
+            target_wheel_velocity = np.clip(target_wheel_velocity, 0, 3 / self.wheel_radius)
+
+            wheel_velocity = target_wheel_velocity
+
+            if (wheel_velocity - self.current_velocity) > self.delta_v :
+                wheel_velocity = self.current_velocity + self.delta_v
+
+            elif (wheel_velocity - self.current_velocity) < -self.delta_v :
+                wheel_velocity = self.current_velocity-self.delta_v
+            
+
+            if self.assist_ramping and target_wheel_velocity > 0.1 and abs(wheel_velocity - target_wheel_velocity) < self.delta_v:
+                self.assist_ramping = False
+                self.afo_enabled = True
+                self.oscillator.omega = 2 * np.pi * self.cadence
+                print("Assist ramp complete. AFO tracking enabled.")
+
+
+            stride_used = self.cal_stride if self.last_stride is None else self.last_stride
+            print(f'Velocty Comparison {self.cal_raw/(self.cadence*stride_used)}')
+            self.current_velocity = wheel_velocity
+            self.velocity_history.append(wheel_velocity)
+            self.commanded_timestamps.append(current_time)
+
+
+            return wheel_velocity
                 
 # --- Returns a value between 0 and 1 given a pelvis value between error max and error min ---
 def attenuation(pelvis,error_max,error_min):
