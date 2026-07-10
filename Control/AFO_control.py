@@ -5,7 +5,7 @@ from std_msgs.msg import Float64, Bool
 from sensor_msgs.msg import LaserScan
 from sensor_msgs.msg import JointState
 from matplotlib import pyplot as plt
-from AFO import (Cluster,main_loop)
+from AFO import (Cluster,main_loop,SignalProcessor)
 import numpy as np
 
 '''class PID:
@@ -39,6 +39,7 @@ class walker_control_node(Node):
         self.current_scan = None
         self.encoder = None
         self.start_time = self.get_clock().now().nanoseconds / 1e9
+        self.abs_time_history=[]
 
         # 3. Publishers
         self.pub_shutdown = self.create_publisher(Bool, '/shutdown', 1)
@@ -57,6 +58,8 @@ class walker_control_node(Node):
 
         self.cluster = Cluster()
         self.main = main_loop()
+        self.signal_process=SignalProcessor()
+        self.pub_shutdown.publish(Bool(data=False))
 
         self.timer = self.create_timer(1.0 / self.main.fs, self.control_loop_callback)
 
@@ -79,18 +82,26 @@ class walker_control_node(Node):
         
         self.encoder_velocity = (self.encoder.velocity[0] + self.encoder.velocity[1]) / 2.0
         self.current_time = (self.get_clock().now().nanoseconds / 1e9) - self.start_time
+        self.abs_time_history.append(self.current_time)
     
         collisions = self.cluster.process_scan(self.current_scan.angle_min,self.current_scan.angle_increment,self.current_scan.ranges,0) 
-        self.raw_left, self.raw_right, self.isoccluded= self.cluster.cluster_find(collisions)
+        self.raw_left, self.raw_right, self.isoccluded,shutdown= self.cluster.cluster_find(collisions)
+        if shutdown is True:
+            self.pub_shutdown.publish(Bool(data=True))
+            self.get_logger().error("Persistent Leg Occlusion Detected Published Shutdown Command")
+            return
         if self.raw_left is None or self.raw_right is None:
             return
-        wheel_velocity = self.main.step_from_legs(self.current_time,self.encoder_velocity,self.raw_left[0],self.raw_right[0],self.isoccluded)
-        
+        step_result=self.main.step_from_legs(self.current_time,self.encoder_velocity,self.raw_left[0],self.raw_right[0],self.isoccluded)
+        if step_result is None or step_result[0] is None:
+            return
+        self.wheel_velocity, self.time_to_cal = step_result 
+        self.wheel_velocity = np.clip(self.wheel_velocity,0,15)
         # -- Run Calculations -- 
 
 
-                #self.pub_left_motor.publish(Float64(data=wheel_velocity))
-                #self.pub_right_motor.publish(Float64(data=wheel_velocity))
+                #self.pub_left_motor.publish(Float64(data=self.wheel_velocity))
+                #self.pub_right_motor.publish(Float64(data=self.wheel_velocity))
 
 def main(args=None):
     rclpy.init(args=args)
@@ -121,25 +132,51 @@ def main(args=None):
 
             print("\n Generating Post-Run Gait Calibration Plots...")
 
-            print(f"Predicted mean: {np.mean(walker_node.main.velocity_history):.3f} rad/s")
+            print(f"Predicted mean: {np.nanmean(walker_node.main.velocity_history):.3f} rad/s")
             print(f"True mean:      {np.nanmean(walker_node.main.encoder_data):.3f} rad/s")
             print(f"RMSE Predicted to True Velocity:       {rmse:.3f}")
             print(f'Mean error: {mean_error} --- Negative : missing low --- Positive : missing high ---')
             print(f'Mean error absolute {mae}')
             print(f'Standard Deviation of commanded velocity {command_std}')
+            print(f'Time to Calibration {walker_node.time_to_cal}')
 
             plt.figure(1)
             
             # FIXED NAMESPACES: Pointing consistently to your main control object attributes
             plt.plot(walker_node.main.commanded_timestamps, walker_node.main.velocity_history, color='red', linestyle='--', label='Velocity Command')
             plt.plot(walker_node.main.encoder_time, walker_node.main.encoder_data, color='blue', label='Encoder Data Feedback')
-            plt.plot(walker_node.main.commanded_timestamps, walker_node.main.control_state, color='purple', linestyle='--', label='State of Control')
-            
             plt.ylabel("rad/s")
             plt.xlabel("Time (s)")
             plt.legend()
             plt.grid(True)
             plt.show() # This blocks execution until you physically close the plot window
+
+            plt.figure(2)
+            plt.plot(walker_node.main.commanded_timestamps,walker_node.main.cadence_history,color='red', linestyle='--', label='Cadence (Hz)')
+            plt.ylabel("Hertz (Hz)")
+            plt.xlabel("Time (s)")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
+            plt.figure(3)
+            plt.plot(walker_node.main.encoder_time,walker_node.main.pelvis_history,color='red', linestyle='--', label='Pelvis Position (m)')
+            plt.ylabel("meters (m)")
+            plt.xlabel("Time (s)")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
+            plt.figure(4)
+            
+            plt.plot(walker_node.main.commanded_timestamps, walker_node.main.control_state, color='purple', linestyle='--', label='State of Control')
+            plt.title("Control State --- 1: Desired Distance ---- 2: Attenuation ---- 3: Too far from walker Zero Velocity")
+            plt.ylabel('Control State')
+            plt.xlabel("Time (s)")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
         else:
             print("\n No gait telemetry data was captured to plot.")
 

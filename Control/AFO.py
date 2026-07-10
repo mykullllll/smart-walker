@@ -78,7 +78,7 @@ class SignalProcessor:
 class AdaptiveFrequencyOscillator:
     #Calculate Frequency of signal
 
-    def __init__(self,sampling_frequency,eta=0.3,eps=1.5,mu=1):
+    def __init__(self,sampling_frequency,eta,eps,mu=1):
         self.sampling_frequency=sampling_frequency
         self.x=0
         self.y=1.0
@@ -146,6 +146,7 @@ class Cluster:
         self.clump=clump
         self.occlusion=occlusion
         self.noise=noise
+        self.occlusions_length=0
         
         self.width_history = width_history if width_history is not None else []
 
@@ -153,8 +154,13 @@ class Cluster:
 
     def cluster_find(self,collisions):
         isoccluded=False
+        
         if len(collisions)==0:
-            return None, None, isoccluded
+            isoccluded = True
+            self.occlusions_length += 1
+            if self.occlusions_length >= 20:
+                return None, None, isoccluded,True
+            return None, None, isoccluded,False
         
         cluster=DBSCAN(eps=4e-2,min_samples=3).fit(collisions)
         labels=cluster.labels_
@@ -168,7 +174,7 @@ class Cluster:
                 leg_points= collisions[labels==index]
                 centroid= (np.mean(leg_points,axis=0))
                 centroids.append(centroid)
-
+            self.occlusions_length = 0
             self.accurate+=1
 
 
@@ -196,6 +202,15 @@ class Cluster:
                 self.width_history.append(width)
                 self.occlusion+=1
                 isoccluded=True
+
+                if isoccluded:
+                    self.occlusions_length+=1
+                else:
+                    self.occlusions_length=0
+
+                if self.occlusions_length >= 20:
+                    print(f'Number of Occlussions: {self.occlusions_length} Exceeded Threshold. Stopping Program')
+                    return None, None, isoccluded,True
                 
                 #Check which leg current cluster corresponds to
                 if self.prev_leg_l is not None and self.prev_leg_r is not None:
@@ -205,27 +220,31 @@ class Cluster:
 
                     if dist_center_r > dist_center_l:
                         print(f"Right leg occluded: Right Leg {dist_center_r} Left Leg {dist_center_l}")
-                        return  self.prev_leg_l, single_centroid, isoccluded
+                        return  self.prev_leg_l, single_centroid, isoccluded,False
                     
                     else:
                         print(f"Left Leg Occluded: Right Leg {single_centroid} Left Leg {self.prev_leg_l}")
-                        return  single_centroid,self.prev_leg_r, isoccluded
+                        return  single_centroid,self.prev_leg_r, isoccluded,False
                     
                 #If no history drop frame
                 else:
-                    return None, None, isoccluded
+                    return None, None, isoccluded,False
 
 
         if len (unique_labels)>2:
 
             if self.prev_leg_l is not None and self.prev_leg_r is not None:
                 self.noise+=1
-                return self.prev_leg_l,self.prev_leg_r,isoccluded
+                return self.prev_leg_l,self.prev_leg_r,isoccluded,False
             else:
-                return None, None, isoccluded
+                return None, None, isoccluded, False
             
         if len(unique_labels) == 0:
-            return self.prev_leg_l, self.prev_leg_r, isoccluded
+            isoccluded = True
+            self.occlusions_length += 1
+            if self.occlusions_length >= 20:
+                return None, None, isoccluded,True
+            return self.prev_leg_l, self.prev_leg_r, isoccluded, False
 
         else:
             if centroids[0][1]<centroids[1][1]:
@@ -242,7 +261,7 @@ class Cluster:
 
 
         print(f"Right Leg {right_leg} Left Leg {left_leg}")
-        return left_leg,right_leg,isoccluded
+        return left_leg,right_leg,isoccluded,False
         
 
     #Collision Scanner
@@ -299,6 +318,7 @@ class main_loop:
         self.calibrated = False
         self.velocity_gain = 1.0
         self.cal_stride = None
+        self.time_to_cal = 0
 
         #Classes
         self.signal = SignalProcessor()
@@ -313,6 +333,8 @@ class main_loop:
         self.encoder_data = []
         self.encoder_time = []
         self.control_state = []  
+        self.cadence_history=[]
+        self.pelvis_history=[]
 
 
         self.afo_enabled = False
@@ -322,12 +344,13 @@ class main_loop:
         if left_x is not None and right_x is not None and encoder_velocity is not None:
             left,right,scissor_signal,pelvis = self.signal.offline_data(left_x,right_x,current_time,encoder_velocity)
             print(f'scissor window : {len(self.signal.scissor_window)} , calibrated: {self.calibrated}')
+            self.pelvis_history.append(pelvis)
             self.encoder_data.append(encoder_velocity)
             self.encoder_time.append(current_time)
 
             if not self.calibrated:
                 if len(self.signal.scissor_window) >= 150 and not self.calibrated:
-                    self.cal,self.x_d,self.velocity_gain,self.cal_stride,self.raw_frequency= calibration.calibration(self.signal.right,self.signal.left,self.signal.scissor_window,self.fs,self.signal.cal_encoder_velocity,current_omega=self.oscillator.omega, wheel_radius=self.wheel_radius,timestamps=self.signal.true_timestamp)
+                    self.cal,self.x_d,self.velocity_gain,self.cal_stride,self.raw_frequency,self.time_to_cal= calibration.calibration(self.signal.right,self.signal.left,self.signal.scissor_window,self.fs,self.signal.cal_encoder_velocity,current_omega=self.oscillator.omega, wheel_radius=self.wheel_radius,timestamps=self.signal.true_timestamp)
                     
                     if self.cal == True: 
                         self.calibrated=True
@@ -354,17 +377,18 @@ class main_loop:
                         self.cal_time.clear()
                         self.walker.stride_window.clear()
                         self.walker.stride_history.clear()
-                return None
+                return None,None
             
             if self.afo_enabled:
                 if isoccluded == True:
-                    self.phase,self.prev_cadence,_= self.oscillator.step_afo(scissor_signal)
+                    self.cadence = self.prev_cadence
                 else:
                     self.phase,self.cadence,_= self.oscillator.step_afo(scissor_signal)
                     self.prev_cadence = self.cadence
             else:
                 self.cadence=self.raw_frequency
 
+            self.cadence_history.append(self.cadence)
             self.walker.stride_window.append(scissor_signal)
             self.last_stride = self.walker.last_stride(self.walker.stride_window)
 
@@ -378,17 +402,17 @@ class main_loop:
             if -1.0 < pelvis < -0.558:
                 attenuation_factor=attenuation(pelvis,-1.0,-0.558)
                 linear_velocity =  attenuation_factor * feedforward_velocity
-                self.control_state.append(1)
+                self.control_state.append(2)
 
             elif -0.254 < pelvis < 0:
                 attenuation_factor=attenuation(pelvis,-0.254,0) 
 
                 linear_velocity =  attenuation_factor * feedforward_velocity
-                self.control_state.append(1)
+                self.control_state.append(2)
 
             elif -0.558 < pelvis < -0.254:
                 linear_velocity = feedforward_velocity
-                self.control_state.append(2)
+                self.control_state.append(1)
 
             else:
                 linear_velocity = 0 
@@ -419,9 +443,8 @@ class main_loop:
             self.current_velocity = wheel_velocity
             self.velocity_history.append(wheel_velocity)
             self.commanded_timestamps.append(current_time)
-
-
-            return wheel_velocity
+            
+            return wheel_velocity,self.time_to_cal
                 
 # --- Returns a value between 0 and 1 given a pelvis value between error max and error min ---
 def attenuation(pelvis,error_max,error_min):
