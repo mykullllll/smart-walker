@@ -59,7 +59,6 @@ class walker_control_node(Node):
         self.cluster = Cluster()
         self.main = main_loop()
         self.signal_process=SignalProcessor()
-        self.pub_shutdown.publish(Bool(data=False))
         self.shutdown_requested = False
 
         self.timer = self.create_timer(1.0 / self.main.fs, self.control_loop_callback)
@@ -95,7 +94,7 @@ class walker_control_node(Node):
             stop_msg = Float64(data=0.0)
             #self.pub_left_motor.publish(stop_msg)
             #self.pub_right_motor.publish(stop_msg))
-            self.time.cancel()
+            self.timer.cancel()
             self.get_logger().error("Persistent Leg Occlusion Detected Published Shutdown Command")
             rclpy.shutdown()
             return
