@@ -76,6 +76,7 @@ class walker_control_node(Node):
         if self.encoder is None:
             self.get_logger().info("no encoder data")
             return
+        
         self.encoder_velocity = (self.encoder.velocity[0] + self.encoder.velocity[1]) / 2.0
         self.current_time = (self.get_clock().now().nanoseconds / 1e9) - self.start_time
     
@@ -90,8 +91,6 @@ class walker_control_node(Node):
 
                 #self.pub_left_motor.publish(Float64(data=wheel_velocity))
                 #self.pub_right_motor.publish(Float64(data=wheel_velocity))
-
-
 
 def main(args=None):
     rclpy.init(args=args)

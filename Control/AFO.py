@@ -205,11 +205,11 @@ class Cluster:
 
                     if dist_center_r > dist_center_l:
                         print(f"Right leg occluded: Right Leg {dist_center_r} Left Leg {dist_center_l}")
-                        return  single_centroid, self.prev_leg_r, isoccluded
+                        return  self.prev_leg_l, single_centroid, isoccluded
                     
                     else:
                         print(f"Left Leg Occluded: Right Leg {single_centroid} Left Leg {self.prev_leg_l}")
-                        return  self.prev_leg_l,single_centroid, isoccluded
+                        return  single_centroid,self.prev_leg_r, isoccluded
                     
                 #If no history drop frame
                 else:
@@ -222,7 +222,7 @@ class Cluster:
                 self.noise+=1
                 return self.prev_leg_l,self.prev_leg_r,isoccluded
             else:
-                return [-1,0], [-1,0], isoccluded
+                return None, None, isoccluded
             
         if len(unique_labels) == 0:
             return self.prev_leg_l, self.prev_leg_r, isoccluded
