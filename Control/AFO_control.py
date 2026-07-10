@@ -51,7 +51,7 @@ class walker_control_node(Node):
         self.create_subscription(JointState, '/encoder_data', self.encoder_callback, 1)
 
         #rospy.on_shutdown(stop_motors)
-
+        
         self.get_logger().info("=" * 50)
         self.get_logger().info("Controller engaged. Please Begin Walking Calibrating Your Walking Style.")
         self.get_logger().info("=" * 50)        
@@ -60,6 +60,7 @@ class walker_control_node(Node):
         self.main = main_loop()
         self.signal_process=SignalProcessor()
         self.pub_shutdown.publish(Bool(data=False))
+        self.shutdown_requested = False
 
         self.timer = self.create_timer(1.0 / self.main.fs, self.control_loop_callback)
 
@@ -72,6 +73,8 @@ class walker_control_node(Node):
 
     #The Control Loop Timer (Replaces the while loop)
     def control_loop_callback(self):
+        if self.shutdown_requested:
+            return
         if self.current_scan is None:
             self.get_logger().info("no scan")
             return
@@ -87,9 +90,16 @@ class walker_control_node(Node):
         collisions = self.cluster.process_scan(self.current_scan.angle_min,self.current_scan.angle_increment,self.current_scan.ranges,0) 
         self.raw_left, self.raw_right, self.isoccluded,shutdown= self.cluster.cluster_find(collisions)
         if shutdown is True:
+            self.shutdown_requested = True
             self.pub_shutdown.publish(Bool(data=True))
+            stop_msg = Float64(data=0.0)
+            #self.pub_left_motor.publish(stop_msg)
+            #self.pub_right_motor.publish(stop_msg))
+            self.time.cancel()
             self.get_logger().error("Persistent Leg Occlusion Detected Published Shutdown Command")
+            rclpy.shutdown()
             return
+        
         if self.raw_left is None or self.raw_right is None:
             return
         step_result=self.main.step_from_legs(self.current_time,self.encoder_velocity,self.raw_left[0],self.raw_right[0],self.isoccluded)
@@ -97,9 +107,8 @@ class walker_control_node(Node):
             return
         self.wheel_velocity, self.time_to_cal = step_result 
         self.wheel_velocity = np.clip(self.wheel_velocity,0,15)
+        
         # -- Run Calculations -- 
-
-
                 #self.pub_left_motor.publish(Float64(data=self.wheel_velocity))
                 #self.pub_right_motor.publish(Float64(data=self.wheel_velocity))
 
@@ -132,49 +141,51 @@ def main(args=None):
 
             print("\n Generating Post-Run Gait Calibration Plots...")
 
-            print(f"Predicted mean: {np.nanmean(walker_node.main.velocity_history):.3f} rad/s")
-            print(f"True mean:      {np.nanmean(walker_node.main.encoder_data):.3f} rad/s")
-            print(f"RMSE Predicted to True Velocity:       {rmse:.3f}")
+            print(f'Calibration time: {walker_node.time_to_cal} s')
+            print(f"Mean Command: {np.nanmean(walker_node.main.velocity_history):.3f} rad/s")
+            print(f"Mean Encoder:      {np.nanmean(walker_node.main.encoder_data):.3f} rad/s")
+            print(f"RMSE Predicted to True Velocity:       {rmse:.3f} rad/s")
             print(f'Mean error: {mean_error} --- Negative : missing low --- Positive : missing high ---')
-            print(f'Mean error absolute {mae}')
+            print(f'Mean error absolute (MAE): {mae}')
             print(f'Standard Deviation of commanded velocity {command_std}')
-            print(f'Time to Calibration {walker_node.time_to_cal}')
+            print(f'Time in Active Assist: {100*(walker_node.main.control_state.count(1)/len(walker_node.main.control_state))} % ')
+            print(f'Time in Active Attenuation:{100*(walker_node.main.control_state.count(2)/len(walker_node.main.control_state))} %')
+            print(f'Time in 0 Velocity: {100*(walker_node.main.control_state.count(3)/len(walker_node.main.control_state))} %')
 
-            plt.figure(1)
+            fig,axs = plt.subplots(nrows=2, ncols=2, figsize=(10, 8))
+
+            axs[0,0].plot(walker_node.main.commanded_timestamps, walker_node.main.velocity_history, color='red', linestyle='--', label='Velocity Command')
+            axs[0,0].plot(walker_node.main.encoder_time, walker_node.main.encoder_data, color='blue', label='Encoder Data Feedback')
+            axs[0,0].set_title("Velocity Command vs Encoder Data")
+            axs[0,0].set_ylabel("rad/s")
+            axs[0,0].set_xlabel("Time (s)")
+            axs[0,0].legend()
+            axs[0,0].grid(True)
+
+            axs[0,1].plot(walker_node.main.commanded_timestamps,walker_node.main.cadence_history,color='red', linestyle='--', label='Cadence (Hz)')
+            axs[0,1].set_ylabel("Hertz (Hz)")
+            axs[0,1].set_xlabel("Time (s)")
+            axs[0,1].set_title('Cadence History (Hz)')
+            axs[0,1].legend()
+            axs[0,1].grid(True)
+
+            axs[1,0].plot(walker_node.main.encoder_time,walker_node.main.pelvis_history,color='red', linestyle='--', label='Pelvis Position (m)')
+            axs[1,0].set_ylabel("meters (m)")
+            axs[1,0].set_xlabel("Time (s)")
+            axs[1,0].set_title("Pelvis Position (m)")
+            axs[1,0].legend()
+            axs[1,0].grid(True)
             
-            # FIXED NAMESPACES: Pointing consistently to your main control object attributes
-            plt.plot(walker_node.main.commanded_timestamps, walker_node.main.velocity_history, color='red', linestyle='--', label='Velocity Command')
-            plt.plot(walker_node.main.encoder_time, walker_node.main.encoder_data, color='blue', label='Encoder Data Feedback')
-            plt.ylabel("rad/s")
-            plt.xlabel("Time (s)")
-            plt.legend()
-            plt.grid(True)
-            plt.show() # This blocks execution until you physically close the plot window
-
-            plt.figure(2)
-            plt.plot(walker_node.main.commanded_timestamps,walker_node.main.cadence_history,color='red', linestyle='--', label='Cadence (Hz)')
-            plt.ylabel("Hertz (Hz)")
-            plt.xlabel("Time (s)")
-            plt.legend()
-            plt.grid(True)
-            plt.show()
-
-            plt.figure(3)
-            plt.plot(walker_node.main.encoder_time,walker_node.main.pelvis_history,color='red', linestyle='--', label='Pelvis Position (m)')
-            plt.ylabel("meters (m)")
-            plt.xlabel("Time (s)")
-            plt.legend()
-            plt.grid(True)
-            plt.show()
-
-            plt.figure(4)
-            
-            plt.plot(walker_node.main.commanded_timestamps, walker_node.main.control_state, color='purple', linestyle='--', label='State of Control')
-            plt.title("Control State --- 1: Desired Distance ---- 2: Attenuation ---- 3: Too far from walker Zero Velocity")
-            plt.ylabel('Control State')
-            plt.xlabel("Time (s)")
-            plt.legend()
-            plt.grid(True)
+            axs[1,1].plot(walker_node.main.commanded_timestamps, walker_node.main.control_state, color='purple', linestyle='--', label='State of Control')
+            axs[1,1].set_title("Control State")
+            axs[1,1].set_ylabel('Control State')
+            axs[1,1].set_xlabel("Time (s)")
+            axs[1,1].set_yticks([1, 2, 3])
+            axs[1,1].set_yticklabels(["Assist", "Attenuated", "Stopped"])
+            axs[1,1].legend()
+            axs[1,1].grid(True)
+        
+            plt.tight_layout()
             plt.show()
 
         else:
