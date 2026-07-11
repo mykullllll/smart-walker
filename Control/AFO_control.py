@@ -7,30 +7,8 @@ from sensor_msgs.msg import JointState
 from matplotlib import pyplot as plt
 from AFO import (Cluster,main_loop,SignalProcessor)
 import numpy as np
-
-'''class PID:
-
-
-    def pid(self,pelvis,state):
-        if not state:
-            self.prev_error = []
-            return None
-        else:
-            error=self.x_d - pelvis
-            self.prev_error.append(error)
-            if len(self.prev_error) > 10:
-                tau = 0.1
-                filtered_error = tau * float(error) + (1 - tau) * float(self.prev_error[-2])
-                d_term = ((filtered_error - self.prev_error[-2]) / self.dt) * self.k_d
-                p_term = self.k_p * filtered_error 
-                feedback_velocity = d_term  + p_term
-                feedback_velocity = np.clip(feedback_velocity,0,0.5)
-                return -feedback_velocity
-        else:
-            return None'''
-
-        
-
+import serial
+import time
 
 class walker_control_node(Node):
     def __init__(self):
@@ -132,6 +110,33 @@ class walker_control_node(Node):
         self.pub_left_motor.publish(Float64(data=self.wheel_velocity))
         self.pub_right_motor.publish(Float64(data=self.wheel_velocity))
 
+
+def pulse_esp32_reset():
+    """Uses native serial lines with an explicit hardware settling delay to force an ESP32 reboot."""
+    print("⚡ Flashing DTR/RTS lines to force firmware reboot...")
+    try:
+        # Open the serial hook cleanly
+        ser = serial.Serial('/dev/ttyUSB0', 115200, timeout=0.1)
+        
+        # 1. Drive the EN pin LOW by setting DTR/RTS states
+        ser.setDTR(False)
+        ser.setRTS(True)
+        
+        # 🔬 THE CAPACITOR DRAIN BUFFER
+        # 50 milliseconds is the sweet spot: long enough to completely discharge 
+        # the onboard RC filter circuit on the EN pin, but fast enough that you won't feel the lag.
+        time.sleep(0.05) 
+        
+        # 2. Release the lines back to high to allow the chip to boot into a clean state
+        ser.setDTR(True)
+        ser.setRTS(False)
+        
+        ser.close()
+        print("✅ ESP32 hardware reset successful. Motors locked.")
+    except Exception as e:
+        print(f"Could not signal hardware lines: {e}")
+
+
 def main(args=None):
     rclpy.init(args=args)
     walker_node = walker_control_node()
@@ -155,6 +160,7 @@ def main(args=None):
         if rclpy.ok():
             rclpy.shutdown()
 
+        pulse_esp32_reset()
         # Safe shutdown procedure
         '''stop_msg = Float64()
         stop_msg.data = 0.0
@@ -227,3 +233,27 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
+
+
+
+'''class PID:
+
+
+    def pid(self,pelvis,state):
+        if not state:
+            self.prev_error = []
+            return None
+        else:
+            error=self.x_d - pelvis
+            self.prev_error.append(error)
+            if len(self.prev_error) > 10:
+                tau = 0.1
+                filtered_error = tau * float(error) + (1 - tau) * float(self.prev_error[-2])
+                d_term = ((filtered_error - self.prev_error[-2]) / self.dt) * self.k_d
+                p_term = self.k_p * filtered_error 
+                feedback_velocity = d_term  + p_term
+                feedback_velocity = np.clip(feedback_velocity,0,0.5)
+                return -feedback_velocity
+        else:
+            return None'''
