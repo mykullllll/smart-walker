@@ -120,7 +120,7 @@ class walker_control_node(Node):
             return
         
         self.wheel_velocity, self.time_to_cal = step_result 
-        self.wheel_velocity = np.clip(self.wheel_velocity,0,5)
+        self.wheel_velocity = np.clip(self.wheel_velocity,0,7)
 
         # -- Run Calculations -- 
         arm_msg = Bool(data=False)
