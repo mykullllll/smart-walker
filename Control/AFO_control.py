@@ -38,13 +38,13 @@ class walker_control_node(Node):
         self.main = main_loop()
         self.signal_process=SignalProcessor()
 
-        self.arm_timer = self.create_timer(0.5, self.arm_hardware_callback)
+        #self.arm_timer = self.create_timer(0.5, self.arm_hardware_callback)
         self.timer = self.create_timer(1.0 / self.main.fs, self.control_loop_callback)
 
 
     #Unlock ESP32 on Startup
     def arm_hardware_callback(self):
-        self.arm_timer.cancel()
+        #self.arm_timer.cancel()
         if rclpy.ok():
             arm_msg = Bool(data=False)
             self.pub_shutdown.publish(arm_msg)
@@ -54,7 +54,7 @@ class walker_control_node(Node):
     def stop_motor(self):
         print("STOPPING MOTORS AND ENGAGING FIRMWARE LOCKOUT...")
         try:
-            self.arm_timer.cancel()
+            #self.arm_timer.cancel()
             self.timer.cancel()
             stop = Float64(data=0.0)
             self.pub_left_motor.publish(stop)
@@ -106,19 +106,16 @@ class walker_control_node(Node):
 
 
         if not was_calibrated and self.main.calibrated:
+
             self.pub_left_motor.publish(Float64(data=0.0))
             self.pub_right_motor.publish(Float64(data=0.0))
-            self.pub_shutdown.publish(Bool(data=False))
-
             input("Calibration complete. Press Enter to begin powered assist...")
 
+            self.pub_shutdown.publish(Bool(data=False))
             self.pub_left_motor.publish(Float64(data=0.0))
             self.pub_right_motor.publish(Float64(data=0.0))
-            self.pub_shutdown.publish(Bool(data=False))
             return
         
-
-
         if step_result is None or step_result[0] is None:
             return
         
@@ -175,7 +172,8 @@ def main(args=None):
         walker_node.timer.cancel()
 
         #ESP32 Connection to Motors Locked
-        walker_node.arm_timer.cancel()
+        if hasattr(walker_node, "arm_timer"):
+            walker_node.arm_timer.cancel()
 
 
         # Let the final frames exit the socket stack cleanly
