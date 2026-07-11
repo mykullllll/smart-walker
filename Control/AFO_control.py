@@ -107,13 +107,13 @@ class walker_control_node(Node):
 
         if not was_calibrated and self.main.calibrated:
 
-            self.pub_left_motor.publish(Float64(data=0.0))
-            self.pub_right_motor.publish(Float64(data=0.0))
+            #self.pub_left_motor.publish(Float64(data=0.0))
+            #self.pub_right_motor.publish(Float64(data=0.0))
             input("Calibration complete. Press Enter to begin powered assist...")
 
-            self.pub_shutdown.publish(Bool(data=False))
-            self.pub_left_motor.publish(Float64(data=0.0))
-            self.pub_right_motor.publish(Float64(data=0.0))
+            #self.pub_shutdown.publish(Bool(data=False))
+            #self.pub_left_motor.publish(Float64(data=0.0))
+            #self.pub_right_motor.publish(Float64(data=0.0))
             return
         
         if step_result is None or step_result[0] is None:
@@ -123,10 +123,10 @@ class walker_control_node(Node):
         self.wheel_velocity = np.clip(self.wheel_velocity,0,5)
 
         # -- Run Calculations -- 
-        arm_msg = Bool(data=False)
-        self.pub_shutdown.publish(arm_msg)
-        self.pub_left_motor.publish(Float64(data=self.wheel_velocity))
-        self.pub_right_motor.publish(Float64(data=self.wheel_velocity))
+        #arm_msg = Bool(data=False)
+        #self.pub_shutdown.publish(arm_msg)
+        #self.pub_left_motor.publish(Float64(data=self.wheel_velocity))
+        #self.pub_right_motor.publish(Float64(data=self.wheel_velocity))
 
 
 #ESP32 Hardware Reset on Shutdown
