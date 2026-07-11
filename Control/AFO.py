@@ -32,29 +32,39 @@ class SignalProcessor:
             return filtfilt(b, a, data)'''
 
 
-    def offline_data(self,left_current,right_current,time,encoder):
+    def offline_data(self, left_current, right_current, time, encoder):
+        alpha = 0.35
+        max_leg_jump = 0.20
 
         if left_current is None or right_current is None:
             left_raw = self.prev_left
             right_raw = self.prev_right
             scissor_signal = self.prev_scissor
-            avg_position=self.prev_avg
-
-            self.left.append(left_raw)
-            self.right.append(right_raw)
-            self.scissor_window.append(scissor_signal)
-            self.avg_position_history.append(avg_position)
+            avg_position = self.prev_avg
         else:
-            left_raw = left_current 
+            if len(self.left) > 0:
+                if abs(left_current - self.prev_left) > max_leg_jump:
+                    left_current = self.prev_left + np.sign(left_current - self.prev_left) * max_leg_jump
+                if abs(right_current - self.prev_right) > max_leg_jump:
+                    right_current = self.prev_right + np.sign(right_current - self.prev_right) * max_leg_jump
+
+            left_raw = left_current
             right_raw = right_current
-            scissor_signal=left_current-right_current
-            avg_position=(left_current+right_current)/2
 
-            self.left.append(left_current)
-            self.right.append(right_current)
-            self.scissor_window.append(left_current-right_current)
-            self.avg_position_history.append(avg_position)
+            raw_scissor = left_raw - right_raw
+            raw_avg = (left_raw + right_raw) / 2
 
+            if len(self.scissor_window) == 0:
+                scissor_signal = raw_scissor
+                avg_position = raw_avg
+            else:
+                scissor_signal = self.prev_scissor + alpha * (raw_scissor - self.prev_scissor)
+                avg_position = self.prev_avg + alpha * (raw_avg - self.prev_avg)
+
+        self.left.append(left_raw)
+        self.right.append(right_raw)
+        self.scissor_window.append(scissor_signal)
+        self.avg_position_history.append(avg_position)
 
         if encoder is not None:
             self.encoder_velocity.append(encoder)
@@ -62,16 +72,16 @@ class SignalProcessor:
         else:
             self.encoder_velocity.append(None)
             self.cal_encoder_velocity.append(None)
+
         if time is not None:
             self.true_timestamp.append(time)
         else:
             self.true_timestamp.append(None)
 
-
-        self.prev_scissor=scissor_signal
+        self.prev_scissor = scissor_signal
         self.prev_avg = avg_position
-        self.prev_left=left_raw
-        self.prev_right=right_raw
+        self.prev_left = left_raw
+        self.prev_right = right_raw
 
         return left_raw,right_raw,scissor_signal,avg_position
 
@@ -379,14 +389,33 @@ class main_loop:
                         self.walker.stride_history.clear()
                 return None,None
             
+
+            # before AFO update
+            in_nominal_zone = -0.4556 < pelvis < -0.3556
+            in_close_zone = -0.3556 < pelvis < 0
+            in_far_zone = -0.55 < pelvis < -0.4556
+            in_stop_zone = not (in_far_zone or in_nominal_zone or in_close_zone)
+
+
             if self.afo_enabled:
-                if isoccluded == True:
+                if isoccluded or in_far_zone or in_stop_zone:
                     self.cadence = self.prev_cadence
                 else:
-                    self.phase,self.cadence,_= self.oscillator.step_afo(scissor_signal)
+                    self.phase, measured_cadence, _ = self.oscillator.step_afo(scissor_signal)
+
+                    cadence_floor = 0.85 * self.raw_frequency
+                    measured_cadence = max(measured_cadence, cadence_floor)
+
+                    if measured_cadence > self.prev_cadence:
+                        alpha = 0.35
+                    else:
+                        alpha = 0.08
+
+                    self.cadence = (1 - alpha) * self.prev_cadence + alpha * measured_cadence
                     self.prev_cadence = self.cadence
             else:
-                self.cadence=self.raw_frequency
+                self.cadence = self.raw_frequency
+
 
             self.cadence_history.append(self.cadence)
             self.walker.stride_window.append(scissor_signal)
@@ -400,20 +429,18 @@ class main_loop:
                 feedforward_velocity = self.walker.velocity_command(self.cadence,self.last_stride,self.velocity_gain) 
 
             if -0.55 < pelvis < -0.4556:
-                attenuation_factor=attenuation(pelvis,-0.4556,-0.3556)
+                attenuation_factor=attenuation(pelvis,-0.55,-0.4556)
                 linear_velocity =  attenuation_factor * feedforward_velocity
                 self.control_state.append(2)
 
             elif -0.3556 < pelvis < 0:
                 boost_factor=boost(pelvis,-0.3556,0)
-
                 linear_velocity =  boost_factor * feedforward_velocity
                 self.control_state.append(2)
 
             elif -0.4556 < pelvis < -0.3556:
                 linear_velocity = feedforward_velocity
                 self.control_state.append(1)
-
             else:
                 linear_velocity = 0 
                 self.control_state.append(3)  
@@ -451,7 +478,7 @@ def attenuation(pelvis,error_max,error_min):
     return float(np.interp(pelvis,[error_max,error_min],[0,1.0]))
 
 def boost (pelvis,error_max,error_min):
-    return float(np.interp(pelvis,[error_max,error_min],[1.0,2.0]))
+    return float(np.interp(pelvis,[error_max,error_min],[1.0,1.2]))
 
 
 
