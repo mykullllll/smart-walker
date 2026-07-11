@@ -461,8 +461,7 @@ class main_loop:
                 linear_velocity = 0
                 self.control_state.append(4)
 
-            
-            if -0.60 < pelvis < -0.5:
+            elif -0.60 < pelvis < -0.5:
                 attenuation_factor=attenuation(pelvis,-0.60,-0.50)
                 linear_velocity =  attenuation_factor * feedforward_velocity
                 self.control_state.append(2) 
@@ -475,12 +474,10 @@ class main_loop:
             elif -0.60 < pelvis < -0.280:
                 linear_velocity = feedforward_velocity
                 self.control_state.append(1)
+
             else:
                 linear_velocity = 0 
-                self.control_state.append(4) 
-
-            if self.control_state[-1] == 4:
-                wheel_velocity = max(0.0,self.current_velocity - self.stop_delta_v) 
+                self.control_state.append(4)  
 
             #Wheel Velcoity Ramping/Attenuation/Smoothing
             target_wheel_velocity = linear_velocity / self.wheel_radius
@@ -488,12 +485,20 @@ class main_loop:
 
             wheel_velocity = target_wheel_velocity
 
-            if (wheel_velocity - self.current_velocity) > self.pos_delta_v  :
-                wheel_velocity = self.current_velocity + self.pos_delta_v 
+            if self.control_state[-1] == 4:
+                delta_limit = self.stop_delta_v
+            elif (wheel_velocity - self.current_velocity) > self.pos_delta_v:
+                delta_limit = self.pos_delta_v
+            else:
+                delta_limit= self.neg_delta_v
 
-            elif (wheel_velocity - self.current_velocity) < -self.neg_delta_v :
-                wheel_velocity = self.current_velocity-self.neg_delta_v
-            
+            if wheel_velocity - self.current_velocity > delta_limit:
+                wheel_velocity = self.current_velocity + delta_limit
+            elif wheel_velocity - self.current_velocity < -delta_limit:
+                wheel_velocity = self.current_velocity - delta_limit
+            else:
+                wheel_velocity = target_wheel_velocity
+                            
 
             if self.assist_ramping and target_wheel_velocity > 0.1 and abs(wheel_velocity - target_wheel_velocity) < self.pos_delta_v:
                 self.assist_ramping = False
@@ -503,8 +508,8 @@ class main_loop:
 
 
             print(f'Velocty Comparison {self.cal_raw/(self.cadence*stride_used)}')
-            self.current_velocity = wheel_velocity
             wheel_velocity = np.clip(wheel_velocity,0,6)
+            self.current_velocity = wheel_velocity
             self.velocity_history.append(wheel_velocity)
             self.commanded_timestamps.append(current_time)
             
