@@ -25,6 +25,7 @@ class SignalProcessor:
         self.prev_left=prev_left
         self.prev_right=prev_right
 
+
     '''def lowpass_filter(self,data,cutoff,fs,order=4):
             nyq = 0.5 * fs
             normal_cutoff = cutoff / nyq
@@ -320,8 +321,10 @@ class main_loop:
         self.wheel_radius = wheel_radius
         self.max_accel = 0.4  #m/s^2
         self.max_decel = 0.8  #m/s^2
+        self.stop_accel = 1.2
         self.pos_delta_v = (self.max_accel/self.fs) / self.wheel_radius
         self.neg_delta_v = (self.max_decel/self.fs) / self.wheel_radius
+        self.stop_delta_v = (self.stop_accel/self.fs) / self.wheel_radius
         self.current_velocity = 0
         self.cadence = None
         self.prev_cadence = 1.0
@@ -351,6 +354,8 @@ class main_loop:
 
         self.afo_enabled = False
         self.assist_ramping = False
+        self.prev_control_scissor = None
+        self.freeze_count = 0
 
     def step_from_legs(self, current_time, encoder_velocity, left_x, right_x, isoccluded):
         if left_x is not None and right_x is not None and encoder_velocity is not None:
@@ -399,6 +404,21 @@ class main_loop:
             in_stop_zone = not (in_far_zone or in_nominal_zone or in_close_zone)
 
 
+            if self.prev_control_scissor is None:
+                scissor_speed = 0.0
+            else:
+                scissor_speed = abs(scissor_signal - self.prev_control_scissor) * self.fs
+            self.prev_control_scissor = scissor_signal
+
+
+            freeze_motion = scissor_speed < 0.05
+            if freeze_motion and not in_nominal_zone:
+                self.freeze_count += 1
+            else:
+                self.freeze_count = 0
+
+            freeze_detected = self.freeze_count >= 3
+
             if self.afo_enabled:
                 if isoccluded or not in_nominal_zone:
                     self.cadence = self.prev_cadence
@@ -437,22 +457,30 @@ class main_loop:
                 stride_used,
                 self.velocity_gain)
             
-            if -0.55 < pelvis < -0.4556:
-                attenuation_factor=attenuation(pelvis,-0.55,-0.4556)
-                linear_velocity =  attenuation_factor * feedforward_velocity
-                self.control_state.append(2)
+            if freeze_detected:
+                linear_velocity = 0
+                self.control_state.append(4)
 
-            elif -0.3556 < pelvis < 0:
-                boost_factor=boost(pelvis,-0.3556,0)
+            
+            if -0.60 < pelvis < -0.5:
+                attenuation_factor=attenuation(pelvis,-0.60,-0.50)
+                linear_velocity =  attenuation_factor * feedforward_velocity
+                self.control_state.append(2) 
+
+            elif -0.280 < pelvis < 0:
+                boost_factor=boost(pelvis,-0.280,0)
                 linear_velocity =  boost_factor * feedforward_velocity
                 self.control_state.append(3)
 
-            elif -0.4556 < pelvis < -0.3556:
+            elif -0.60 < pelvis < -0.280:
                 linear_velocity = feedforward_velocity
                 self.control_state.append(1)
             else:
                 linear_velocity = 0 
-                self.control_state.append(4)  
+                self.control_state.append(4) 
+
+            if self.control_state[-1] == 4:
+                wheel_velocity = max(0.0,self.current_velocity - self.stop_delta_v) 
 
             #Wheel Velcoity Ramping/Attenuation/Smoothing
             target_wheel_velocity = linear_velocity / self.wheel_radius
@@ -476,6 +504,7 @@ class main_loop:
 
             print(f'Velocty Comparison {self.cal_raw/(self.cadence*stride_used)}')
             self.current_velocity = wheel_velocity
+            wheel_velocity = np.clip(wheel_velocity,0,6)
             self.velocity_history.append(wheel_velocity)
             self.commanded_timestamps.append(current_time)
             
