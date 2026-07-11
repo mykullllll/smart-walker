@@ -209,8 +209,9 @@ def main(args=None):
             print(f'Mean error absolute (MAE): {mae}')
             print(f'Standard Deviation of commanded velocity {command_std}')
             print(f'Time in Active Assist: {100*(walker_node.main.control_state.count(1)/len(walker_node.main.control_state))} % ')
-            print(f'Time in Active Attenuation:{100*(walker_node.main.control_state.count(2)/len(walker_node.main.control_state))} %')
-            print(f'Time in 0 Velocity: {100*(walker_node.main.control_state.count(3)/len(walker_node.main.control_state))} %')
+            print(f'Time in Active Attenuation: {100*(walker_node.main.control_state.count(2)/len(walker_node.main.control_state))} %')
+            print(f'Time in Boost: {100*(walker_node.main.control_state.count(3)/len(walker_node.main.control_state))} %')
+            print(f'Time in 0 Velocity: {100*(walker_node.main.control_state.count(4)/len(walker_node.main.control_state))} %')
 
             fig,axs = plt.subplots(nrows=2, ncols=2, figsize=(10, 8))
 
@@ -240,8 +241,8 @@ def main(args=None):
             axs[1,1].set_title("Control State")
             axs[1,1].set_ylabel('Control State')
             axs[1,1].set_xlabel("Time (s)")
-            axs[1,1].set_yticks([1, 2, 3])
-            axs[1,1].set_yticklabels(["Assist", "Attenuated", "Stopped"])
+            axs[1,1].set_yticks([1, 2, 3,4])
+            axs[1,1].set_yticklabels(["Assist", "Attenuated","Boost", "Stopped"])
             axs[1,1].legend()
             axs[1,1].grid(True)
         

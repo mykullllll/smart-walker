@@ -318,8 +318,10 @@ class main_loop:
         #1 Physics Parameters
         self.fs = fs
         self.wheel_radius = wheel_radius
-        self.max_accel = 0.3  #m/s^2
-        self.delta_v = (self.max_accel / self.fs) /self.wheel_radius
+        self.max_accel = 0.4  #m/s^2
+        self.max_decel = 0.8  #m/s^2
+        self.pos_delta_v = (self.max_accel/self.fs) / self.wheel_radius
+        self.neg_delta_v = (self.max_decel/self.fs) / self.wheel_radius
         self.current_velocity = 0
         self.cadence = None
         self.prev_cadence = 1.0
@@ -398,36 +400,43 @@ class main_loop:
 
 
             if self.afo_enabled:
-                if isoccluded or in_far_zone or in_stop_zone:
+                if isoccluded or not in_nominal_zone:
                     self.cadence = self.prev_cadence
                 else:
                     self.phase, measured_cadence, _ = self.oscillator.step_afo(scissor_signal)
 
-                    cadence_floor = 0.85 * self.raw_frequency
+                    cadence_floor = self.raw_frequency  # or 0.95 * self.raw_frequency
                     measured_cadence = max(measured_cadence, cadence_floor)
 
                     if measured_cadence > self.prev_cadence:
                         alpha = 0.35
                     else:
-                        alpha = 0.08
+                        alpha = 0.04
 
                     self.cadence = (1 - alpha) * self.prev_cadence + alpha * measured_cadence
                     self.prev_cadence = self.cadence
             else:
                 self.cadence = self.raw_frequency
-
-
+            
             self.cadence_history.append(self.cadence)
-            self.walker.stride_window.append(scissor_signal)
-            self.last_stride = self.walker.last_stride(self.walker.stride_window)
-
+            
+            if in_nominal_zone and not isoccluded:
+                self.walker.stride_window.append(scissor_signal)
+                self.last_stride = self.walker.last_stride(self.walker.stride_window)
 
             #Velocity Calculation / Commands
-            if self.last_stride == None:
-                feedforward_velocity = self.walker.velocity_command(self.cadence,self.cal_stride,self.velocity_gain)
+            if not in_nominal_zone:
+                stride_used = self.cal_stride
+            elif self.last_stride is None:
+                stride_used = self.cal_stride
             else:
-                feedforward_velocity = self.walker.velocity_command(self.cadence,self.last_stride,self.velocity_gain) 
+                stride_used = self.last_stride
 
+            feedforward_velocity = self.walker.velocity_command(
+                self.cadence,
+                stride_used,
+                self.velocity_gain)
+            
             if -0.55 < pelvis < -0.4556:
                 attenuation_factor=attenuation(pelvis,-0.55,-0.4556)
                 linear_velocity =  attenuation_factor * feedforward_velocity
@@ -436,14 +445,14 @@ class main_loop:
             elif -0.3556 < pelvis < 0:
                 boost_factor=boost(pelvis,-0.3556,0)
                 linear_velocity =  boost_factor * feedforward_velocity
-                self.control_state.append(2)
+                self.control_state.append(3)
 
             elif -0.4556 < pelvis < -0.3556:
                 linear_velocity = feedforward_velocity
                 self.control_state.append(1)
             else:
                 linear_velocity = 0 
-                self.control_state.append(3)  
+                self.control_state.append(4)  
 
             #Wheel Velcoity Ramping/Attenuation/Smoothing
             target_wheel_velocity = linear_velocity / self.wheel_radius
@@ -451,21 +460,20 @@ class main_loop:
 
             wheel_velocity = target_wheel_velocity
 
-            if (wheel_velocity - self.current_velocity) > self.delta_v :
-                wheel_velocity = self.current_velocity + self.delta_v
+            if (wheel_velocity - self.current_velocity) > self.pos_delta_v  :
+                wheel_velocity = self.current_velocity + self.pos_delta_v 
 
-            elif (wheel_velocity - self.current_velocity) < -self.delta_v :
-                wheel_velocity = self.current_velocity-self.delta_v
+            elif (wheel_velocity - self.current_velocity) < -self.neg_delta_v :
+                wheel_velocity = self.current_velocity-self.neg_delta_v
             
 
-            if self.assist_ramping and target_wheel_velocity > 0.1 and abs(wheel_velocity - target_wheel_velocity) < self.delta_v:
+            if self.assist_ramping and target_wheel_velocity > 0.1 and abs(wheel_velocity - target_wheel_velocity) < self.pos_delta_v:
                 self.assist_ramping = False
                 self.afo_enabled = True
                 self.oscillator.omega = 2 * np.pi * self.cadence
                 print("Assist ramp complete. AFO tracking enabled.")
 
 
-            stride_used = self.cal_stride if self.last_stride is None else self.last_stride
             print(f'Velocty Comparison {self.cal_raw/(self.cadence*stride_used)}')
             self.current_velocity = wheel_velocity
             self.velocity_history.append(wheel_velocity)
