@@ -45,7 +45,7 @@ class walker_control_node(Node):
         self.pub_shutdown = self.create_publisher(Bool, '/shutdown', 1)
         self.pub_right_motor = self.create_publisher(Float64, '/right_wheel_velocity', 1)
         self.pub_left_motor = self.create_publisher(Float64, '/left_wheel_velocity', 1)
-        
+
         # 4. Subscribers (Note the QoS profile for LiDAR)
         self.create_subscription(LaserScan, '/scan_legs_filtered', self.scan_callback, qos_profile_sensor_data)
         self.create_subscription(JointState, '/encoder_data', self.encoder_callback, 1)
@@ -60,9 +60,31 @@ class walker_control_node(Node):
         self.main = main_loop()
         self.signal_process=SignalProcessor()
         self.shutdown_requested = False
+        self.arm_timer = self.create_timer(0.5, self.arm_hardware_callback)
+
 
         self.timer = self.create_timer(1.0 / self.main.fs, self.control_loop_callback)
 
+    def arm_hardware_callback(self):
+        # Cancel the timer immediately so it only runs ONCE at startup
+        self.arm_timer.cancel()
+        
+        if rclpy.ok():
+            arm_msg = Bool(data=False)
+            self.pub_shutdown.publish(arm_msg)
+            self.get_logger().info('Sent hardware unlock command to ESP32 firmware gates.')
+
+    def stop_motor(self):
+        print("STOPPING MOTORS AND ENGAGING FIRMWARE LOCKOUT...")
+        try:
+            stop = Float64(data=0.0)
+            self.pub_left_motor.publish(stop)
+            self.pub_right_motor.publish(stop)
+            
+            lock = Bool(data=True)
+            self.pub_shutdown.publish(lock)
+        except Exception as e:
+            print(f"Could not broadcast stop frame: {e}")
 
     def scan_callback(self, msg):
         self.current_scan = msg
@@ -90,10 +112,7 @@ class walker_control_node(Node):
         self.raw_left, self.raw_right, self.isoccluded,shutdown= self.cluster.cluster_find(collisions)
         if shutdown is True:
             self.shutdown_requested = True
-            self.pub_shutdown.publish(Bool(data=True))
-            stop_msg = Float64(data=0.0)
-            #self.pub_left_motor.publish(stop_msg)
-            #self.pub_right_motor.publish(stop_msg))
+            self.stop_motor()
             self.timer.cancel()
             self.get_logger().error("Persistent Leg Occlusion Detected Published Shutdown Command")
             rclpy.shutdown()
@@ -105,11 +124,13 @@ class walker_control_node(Node):
         if step_result is None or step_result[0] is None:
             return
         self.wheel_velocity, self.time_to_cal = step_result 
-        self.wheel_velocity = np.clip(self.wheel_velocity,0,15)
-        
+        self.wheel_velocity = np.clip(self.wheel_velocity,0,5)
+
         # -- Run Calculations -- 
-                #self.pub_left_motor.publish(Float64(data=self.wheel_velocity))
-                #self.pub_right_motor.publish(Float64(data=self.wheel_velocity))
+        arm_msg = Bool(data=False)
+        self.pub_shutdown.publish(arm_msg)
+        self.pub_left_motor.publish(Float64(data=self.wheel_velocity))
+        self.pub_right_motor.publish(Float64(data=self.wheel_velocity))
 
 def main(args=None):
     rclpy.init(args=args)
@@ -120,6 +141,20 @@ def main(args=None):
     except KeyboardInterrupt:
         walker_node.get_logger().info('Keyboard Interrupt (SIGINT)')
     finally:
+        # Stop publishing velocity commands immediately
+        walker_node.timer.cancel()
+        
+        # Deploy safety brakes
+        walker_node.stop_motor()
+
+        # Let the final frames exit the socket stack cleanly
+        if rclpy.ok():
+            rclpy.spin_once(walker_node, timeout_sec=0.2)
+            
+        walker_node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
         # Safe shutdown procedure
         '''stop_msg = Float64()
         stop_msg.data = 0.0
@@ -189,11 +224,6 @@ def main(args=None):
 
         else:
             print("\n No gait telemetry data was captured to plot.")
-
-        # Cleanly shut down the ROS 2 node context
-        walker_node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
