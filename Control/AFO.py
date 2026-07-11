@@ -308,7 +308,7 @@ class main_loop:
         #1 Physics Parameters
         self.fs = fs
         self.wheel_radius = wheel_radius
-        self.max_accel = 0.5  #m/s^2
+        self.max_accel = 0.3  #m/s^2
         self.delta_v = (self.max_accel / self.fs) /self.wheel_radius
         self.current_velocity = 0
         self.cadence = None
@@ -399,18 +399,18 @@ class main_loop:
             else:
                 feedforward_velocity = self.walker.velocity_command(self.cadence,self.last_stride,self.velocity_gain) 
 
-            if -1.0 < pelvis < -0.558:
-                attenuation_factor=attenuation(pelvis,-1.0,-0.558)
+            if -0.55 < pelvis < -0.4556:
+                attenuation_factor=attenuation(pelvis,-0.4556,-0.3556)
                 linear_velocity =  attenuation_factor * feedforward_velocity
                 self.control_state.append(2)
 
-            elif -0.254 < pelvis < 0:
-                attenuation_factor=attenuation(pelvis,-0.254,0) 
+            elif -0.3556 < pelvis < 0:
+                boost_factor=boost(pelvis,-0.3556,0)
 
-                linear_velocity =  attenuation_factor * feedforward_velocity
+                linear_velocity =  boost_factor * feedforward_velocity
                 self.control_state.append(2)
 
-            elif -0.558 < pelvis < -0.254:
+            elif -0.4556 < pelvis < -0.3556:
                 linear_velocity = feedforward_velocity
                 self.control_state.append(1)
 
@@ -449,6 +449,9 @@ class main_loop:
 # --- Returns a value between 0 and 1 given a pelvis value between error max and error min ---
 def attenuation(pelvis,error_max,error_min):
     return float(np.interp(pelvis,[error_max,error_min],[0,1.0]))
+
+def boost (pelvis,error_max,error_min):
+    return float(np.interp(pelvis,[error_max,error_min],[1.0,2.0]))
 
 
 
