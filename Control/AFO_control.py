@@ -211,6 +211,7 @@ def main(args=None):
             print(f'Time in Active Attenuation: {100*(walker_node.main.control_state.count(2)/len(walker_node.main.control_state))} %')
             print(f'Time in Boost: {100*(walker_node.main.control_state.count(3)/len(walker_node.main.control_state))} %')
             print(f'Time in 0 Velocity: {100*(walker_node.main.control_state.count(4)/len(walker_node.main.control_state))} %')
+            print(f'Time detected Frozen Gait {walker_node.main.freeze_detected_time}')
 
             fig,axs = plt.subplots(nrows=2, ncols=2, figsize=(10, 8))
 

@@ -350,12 +350,16 @@ class main_loop:
         self.control_state = []  
         self.cadence_history=[]
         self.pelvis_history=[]
+        self.freeze_detected_time= []
 
-
+        #Ramp of AFO
         self.afo_enabled = False
         self.assist_ramping = False
         self.prev_control_scissor = None
+
+        #Frozen Gait Metrics
         self.freeze_count = 0
+        self.prev_freeze_detected = False
 
     def step_from_legs(self, current_time, encoder_velocity, left_x, right_x, isoccluded):
         if left_x is not None and right_x is not None and encoder_velocity is not None:
@@ -417,8 +421,8 @@ class main_loop:
             else:
                 self.freeze_count = 0
 
-            freeze_detected = self.freeze_count >= 3
-
+            freeze_detected = self.freeze_count >= 2
+            
             if self.afo_enabled:
                 if isoccluded or not in_nominal_zone:
                     self.cadence = self.prev_cadence
@@ -460,6 +464,10 @@ class main_loop:
             if freeze_detected:
                 linear_velocity = 0
                 self.control_state.append(4)
+
+                if freeze_detected and not self.prev_freeze_detected:
+                    self.freeze_detected_time.append(current_time)
+                self.prev_freeze_detected = freeze_detected
 
             elif -0.60 < pelvis < -0.5:
                 attenuation_factor=attenuation(pelvis,-0.60,-0.50)
