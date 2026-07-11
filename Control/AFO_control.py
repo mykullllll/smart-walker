@@ -37,29 +37,30 @@ class walker_control_node(Node):
         self.cluster = Cluster()
         self.main = main_loop()
         self.signal_process=SignalProcessor()
-        self.shutdown_requested = False
+
         self.arm_timer = self.create_timer(0.5, self.arm_hardware_callback)
-
-
         self.timer = self.create_timer(1.0 / self.main.fs, self.control_loop_callback)
 
+
+    #Unlock ESP32 on Startup
     def arm_hardware_callback(self):
-        # Cancel the timer immediately so it only runs ONCE at startup
         self.arm_timer.cancel()
-        
         if rclpy.ok():
             arm_msg = Bool(data=False)
             self.pub_shutdown.publish(arm_msg)
             self.get_logger().info('Sent hardware unlock command to ESP32 firmware gates.')
 
+    #Command 0 Velocity to Motors cancel callback
     def stop_motor(self):
         print("STOPPING MOTORS AND ENGAGING FIRMWARE LOCKOUT...")
         try:
+            self.arm_timer.cancel()
+            self.timer.cancel()
             stop = Float64(data=0.0)
             self.pub_left_motor.publish(stop)
             self.pub_right_motor.publish(stop)
             
-            lock = Bool(data=True)
+            lock = Bool(data=True) 
             self.pub_shutdown.publish(lock)
         except Exception as e:
             print(f"Could not broadcast stop frame: {e}")
@@ -70,10 +71,10 @@ class walker_control_node(Node):
     def encoder_callback(self, msg):
         self.encoder = msg
 
-    #The Control Loop Timer (Replaces the while loop)
+
+    #Control Loop 
     def control_loop_callback(self):
-        if self.shutdown_requested:
-            return
+
         if self.current_scan is None:
             self.get_logger().info("no scan")
             return
@@ -88,19 +89,39 @@ class walker_control_node(Node):
     
         collisions = self.cluster.process_scan(self.current_scan.angle_min,self.current_scan.angle_increment,self.current_scan.ranges,0) 
         self.raw_left, self.raw_right, self.isoccluded,shutdown= self.cluster.cluster_find(collisions)
+
         if shutdown is True:
-            self.shutdown_requested = True
             self.stop_motor()
-            self.timer.cancel()
-            self.get_logger().error("Persistent Leg Occlusion Detected Published Shutdown Command")
+            self.get_logger().error("Persistent leg occlusion. Stopping controller.")
             rclpy.shutdown()
             return
         
         if self.raw_left is None or self.raw_right is None:
             return
+        
+
+        was_calibrated = self.main.calibrated
+        
         step_result=self.main.step_from_legs(self.current_time,self.encoder_velocity,self.raw_left[0],self.raw_right[0],self.isoccluded)
+
+
+        if not was_calibrated and self.main.calibrated:
+            self.pub_left_motor.publish(Float64(data=0.0))
+            self.pub_right_motor.publish(Float64(data=0.0))
+            self.pub_shutdown.publish(Bool(data=False))
+
+            input("Calibration complete. Press Enter to begin powered assist...")
+
+            self.pub_left_motor.publish(Float64(data=0.0))
+            self.pub_right_motor.publish(Float64(data=0.0))
+            self.pub_shutdown.publish(Bool(data=False))
+            return
+        
+
+
         if step_result is None or step_result[0] is None:
             return
+        
         self.wheel_velocity, self.time_to_cal = step_result 
         self.wheel_velocity = np.clip(self.wheel_velocity,0,5)
 
@@ -111,6 +132,7 @@ class walker_control_node(Node):
         self.pub_right_motor.publish(Float64(data=self.wheel_velocity))
 
 
+#ESP32 Hardware Reset on Shutdown
 def pulse_esp32_reset():
     """Uses native serial lines with an explicit hardware settling delay to force an ESP32 reboot."""
     print("⚡ Flashing DTR/RTS lines to force firmware reboot...")
@@ -147,10 +169,14 @@ def main(args=None):
         walker_node.get_logger().info('Keyboard Interrupt (SIGINT)')
     finally:
         # Stop publishing velocity commands immediately
-        walker_node.timer.cancel()
-        
-        # Deploy safety brakes
         walker_node.stop_motor()
+
+        #Stops running Control Loop Callback
+        walker_node.timer.cancel()
+
+        #ESP32 Connection to Motors Locked
+        walker_node.arm_timer.cancel()
+
 
         # Let the final frames exit the socket stack cleanly
         if rclpy.ok():
@@ -162,10 +188,6 @@ def main(args=None):
 
         pulse_esp32_reset()
         # Safe shutdown procedure
-        '''stop_msg = Float64()
-        stop_msg.data = 0.0
-        walker_node.pub_left_motor.publish(stop_msg)
-        walker_node.pub_right_motor.publish(stop_msg)'''
 
         if hasattr(walker_node, 'main') and len(walker_node.main.commanded_timestamps) > 0:
 
