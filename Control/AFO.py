@@ -5,7 +5,6 @@ try:
     from . import calibration
 except ImportError:
     import calibration
-
 from collections import deque
 
 
@@ -328,6 +327,9 @@ class main_loop:
         self.freeze_window = deque()
         self.freeze_window_duration = 0.35
         self.freeze_motion_threshold = 0.025
+        self.freeze_detection_armed = False
+        self.ramp_complete_time = None
+        self.freeze_arm_delay = 2.0
 
         #Calibration
         self.calibrated = False
@@ -404,12 +406,18 @@ class main_loop:
 
             # before AFO update
             cadence_update_zone = -0.4556 < pelvis < -0.3556
+
+            if (
+                not self.assist_ramping
+                and self.ramp_complete_time is not None
+                and current_time - self.ramp_complete_time >= self.freeze_arm_delay
+            ):
+                self.freeze_detection_armed = True
+
             pelvis_safe = -0.60 < pelvis < -0.28
 
-
             # Use the unsmoothed leg positions for responsive freeze detection.
-            
-            if isoccluded or not pelvis_safe:
+            if not self.freeze_detection_armed or isoccluded or not pelvis_safe:
                 self.freeze_window.clear()
                 freeze_detected = False
 
@@ -433,14 +441,11 @@ class main_loop:
                 ])
 
                 enough_history = window_age >= 0.30
-                pelvis_safe = -0.60 < pelvis < -0.28
 
                 #Freeze Detection Conditions - 0.3 secondds of data frozen, legs moved less than 2.5 cm relative to each other, The person is inside pelvis range, Both legs are visible. 
                 freeze_detected = (
                     enough_history
                     and motion_range < self.freeze_motion_threshold
-                    and pelvis_safe
-                    and not isoccluded
                 )
 
 
@@ -544,6 +549,11 @@ class main_loop:
                 self.assist_ramping = False
                 self.afo_enabled = True
                 self.oscillator.omega = 2 * np.pi * self.cadence
+
+                self.ramp_complete_time = current_time
+                self.freeze_detection_armed = False
+                self.freeze_window.clear()
+
                 print("Assist ramp complete. AFO tracking enabled.")
 
 
