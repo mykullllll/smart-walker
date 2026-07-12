@@ -6,6 +6,8 @@ try:
 except ImportError:
     import calibration
 
+from collections import deque
+
 
 class SignalProcessor:
     'Handles Signal Processing of LiDAR and Leg detection'
@@ -201,13 +203,9 @@ class Cluster:
                 centroids.append(np.mean(left_leg,axis=0))
                 centroids.append(np.mean(right_leg,axis=0))
 
-                print(f"Clumped Cluster Detected Right leg:{right_leg} Left Leg:{left_leg}")
-
-
         #Occlusion
             else:
                 single_centroid=np.mean(leg_points,axis=0)
-                print("Occlusion Detected")
                 self.width_history.append(width)
                 self.occlusion+=1
                 isoccluded=True
@@ -218,7 +216,6 @@ class Cluster:
                     self.occlusions_length=0
 
                 if self.occlusions_length >= 20:
-                    print(f'Number of Occlussions: {self.occlusions_length} Exceeded Threshold. Stopping Program')
                     return None, None, isoccluded,True
                 
                 #Check which leg current cluster corresponds to
@@ -228,11 +225,9 @@ class Cluster:
                     dist_center_l=np.linalg.norm(single_centroid-self.prev_leg_r)
 
                     if dist_center_r > dist_center_l:
-                        print(f"Right leg occluded: Right Leg {dist_center_r} Left Leg {dist_center_l}")
                         return  self.prev_leg_l, single_centroid, isoccluded,False
                     
                     else:
-                        print(f"Left Leg Occluded: Right Leg {single_centroid} Left Leg {self.prev_leg_l}")
                         return  single_centroid,self.prev_leg_r, isoccluded,False
                     
                 #If no history drop frame
@@ -328,6 +323,12 @@ class main_loop:
         self.cadence = None
         self.prev_cadence = 1.0
 
+
+        #Freeze Detection
+        self.freeze_window = deque()
+        self.freeze_window_duration = 0.35
+        self.freeze_motion_threshold = 0.025
+
         #Calibration
         self.calibrated = False
         self.velocity_gain = 1.0
@@ -354,10 +355,8 @@ class main_loop:
         #Ramp of AFO
         self.afo_enabled = False
         self.assist_ramping = False
-        self.prev_control_scissor = None
 
         #Frozen Gait Metrics
-        self.freeze_count = 0
         self.prev_freeze_detected = False
 
     def step_from_legs(self, current_time, encoder_velocity, left_x, right_x, isoccluded):
@@ -397,29 +396,57 @@ class main_loop:
                         self.cal_time.clear()
                         self.walker.stride_window.clear()
                         self.walker.stride_history.clear()
+                        self.freeze_window.clear()
                 return None,None
             
 
+
+
             # before AFO update
-            in_nominal_zone = -0.4556 < pelvis < -0.3556
+            cadence_update_zone = -0.4556 < pelvis < -0.3556
+            pelvis_safe = -0.60 < pelvis < -0.28
 
-            if self.prev_control_scissor is None:
-                scissor_speed = 0.0
+
+            # Use the unsmoothed leg positions for responsive freeze detection.
+            
+            if isoccluded or not pelvis_safe:
+                self.freeze_window.clear()
+                freeze_detected = False
+
             else:
-                scissor_speed = abs(scissor_signal - self.prev_control_scissor) * self.fs
-            self.prev_control_scissor = scissor_signal
+                raw_scissor = left - right
+                self.freeze_window.append((current_time, raw_scissor))
+
+                #Remove Measurements older than 0.35 sec
+                while (
+                    self.freeze_window
+                    and current_time - self.freeze_window[0][0]
+                    > self.freeze_window_duration
+                ):
+                    self.freeze_window.popleft()
+
+                window_age = current_time - self.freeze_window[0][0]
+
+                #Measure how much the legs moved in the past 0.35 sec
+                motion_range = np.ptp([
+                    value for _, value in self.freeze_window
+                ])
+
+                enough_history = window_age >= 0.30
+                pelvis_safe = -0.60 < pelvis < -0.28
+
+                #Freeze Detection Conditions - 0.3 secondds of data frozen, legs moved less than 2.5 cm relative to each other, The person is inside pelvis range, Both legs are visible. 
+                freeze_detected = (
+                    enough_history
+                    and motion_range < self.freeze_motion_threshold
+                    and pelvis_safe
+                    and not isoccluded
+                )
 
 
-            freeze_motion = scissor_speed < 0.05
-            if freeze_motion and not in_nominal_zone:
-                self.freeze_count += 1
-            else:
-                self.freeze_count = 0
-
-            freeze_detected = self.freeze_count >= 1
             
             if self.afo_enabled:
-                if isoccluded or not in_nominal_zone:
+                if isoccluded or not cadence_update_zone:
                     self.cadence = self.prev_cadence
                 else:
                     self.phase, measured_cadence, _ = self.oscillator.step_afo(scissor_signal)
@@ -430,7 +457,7 @@ class main_loop:
                     if measured_cadence > self.prev_cadence:
                         alpha = 0.35
                     else:
-                        alpha = 0.04
+                        alpha = 0.30
 
                     self.cadence = (1 - alpha) * self.prev_cadence + alpha * measured_cadence
                     self.prev_cadence = self.cadence
@@ -438,13 +465,16 @@ class main_loop:
                 self.cadence = self.raw_frequency
             
             self.cadence_history.append(self.cadence)
-            
-            if in_nominal_zone and not isoccluded:
+
+
+
+            #Check if user in zone to input signal into AFO 
+            if cadence_update_zone and not isoccluded:
                 self.walker.stride_window.append(scissor_signal)
                 self.last_stride = self.walker.last_stride(self.walker.stride_window)
 
             #Velocity Calculation / Commands
-            if not in_nominal_zone:
+            if not cadence_update_zone:
                 stride_used = self.cal_stride
             elif self.last_stride is None:
                 stride_used = self.cal_stride
@@ -461,9 +491,12 @@ class main_loop:
             if freeze_detected:
                 linear_velocity = 0
                 self.control_state.append(4)
-
                 if not self.prev_freeze_detected:
                     self.freeze_detected_time.append(current_time)
+                    print("-------- Freeze Detected -------")
+                    print(f"Start of Freeze Detection: {self.freeze_window[0][0]} s")
+                    print(f"Time of Detection: {current_time} s")
+                    print(f"Range of Motion Detected: {motion_range} m")
 
 
             elif -0.60 < pelvis < -0.5:
@@ -488,7 +521,7 @@ class main_loop:
 
             #Wheel Velcoity Ramping/Attenuation/Smoothing
             target_wheel_velocity = linear_velocity / self.wheel_radius
-            target_wheel_velocity = np.clip(target_wheel_velocity, 0, 3 / self.wheel_radius)
+            target_wheel_velocity = np.clip(target_wheel_velocity, 0, 3 / self.wheel_radius) #Cap velocity at 3 m/s
 
             if self.control_state[-1] == 4:
                 delta_limit = self.stop_delta_v
@@ -514,7 +547,7 @@ class main_loop:
                 print("Assist ramp complete. AFO tracking enabled.")
 
 
-            wheel_velocity = np.clip(wheel_velocity,0,6)
+            wheel_velocity = np.clip(wheel_velocity,0,6) #Cap at 6 rad/s
             self.current_velocity = wheel_velocity
             self.velocity_history.append(wheel_velocity)
             self.commanded_timestamps.append(current_time)
@@ -527,6 +560,5 @@ def attenuation(pelvis,error_max,error_min):
 
 def boost (pelvis,error_max,error_min):
     return float(np.interp(pelvis,[error_max,error_min],[1.0,1.2]))
-
 
 

@@ -88,7 +88,6 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
     last_stride=np.ptp(gold_cycle)
 
 
-    print(f'Velocity Gain: {velocity_gain},Cycled Gains: {cycle_gains}, Cycled Frequencies: {cycle_freqs}, Cycled Stride: {cycle_stride}')
     print('----- Calibration Results -----')
 
     if len(normalized_smooth) < 2:

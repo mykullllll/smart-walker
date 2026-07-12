@@ -9,6 +9,7 @@ from AFO import (Cluster,main_loop,SignalProcessor)
 import numpy as np
 import serial
 import time
+import threading
 import message_filters
 
 
@@ -20,6 +21,8 @@ class walker_control_node(Node):
         self.encoder = None
         self.latest_wheel_velocity = 0.0
         self.last_sensor_update = self.get_clock().now()
+        self.awaiting_confirmation = False
+        self.assist_confirmed = threading.Event()
         self.start_time = self.get_clock().now().nanoseconds / 1e9
         self.abs_time_history=[]
 
@@ -81,6 +84,12 @@ class walker_control_node(Node):
         self.encoder = encoder_msg
         self.last_sensor_update = self.get_clock().now()
 
+    #Runs on a background thread so the ROS executor (and sensor callbacks) keep running
+    #while waiting for the operator to confirm powered assist should begin.
+    def _wait_for_assist_confirmation(self):
+        input("Calibration complete. Press Enter to begin powered assist...")
+        self.assist_confirmed.set()
+
     #Publishes the latest computed wheel velocity at a fixed 30Hz, decoupled from the
     #(slower) perception/control rate. Fail-safe checkpoint: zeros the command if sensor
     #data has gone stale, so a stalled control loop can't leave motors spinning indefinitely.
@@ -119,6 +128,16 @@ class walker_control_node(Node):
             if self.raw_left is None or self.raw_right is None:
                 return
 
+            #Hold here without advancing the AFO ramp state until the operator confirms.
+            #Sensor callbacks and this loop keep running normally (unlike the old blocking
+            #input()), so the eventual ramp starts from a fresh read, not a stale one.
+            if self.awaiting_confirmation:
+                self.latest_wheel_velocity = 0.0
+                if not self.assist_confirmed.is_set():
+                    return
+                self.awaiting_confirmation = False
+                self.pub_shutdown.publish(Bool(data=False))
+
             was_calibrated = self.main.calibrated
 
             step_result=self.main.step_from_legs(self.current_time,self.encoder_velocity,self.raw_left[0],self.raw_right[0],self.isoccluded)
@@ -127,16 +146,12 @@ class walker_control_node(Node):
             return
 
         if not was_calibrated and self.main.calibrated:
-
-            self.pub_left_motor.publish(Float64(data=0.0))
-            self.pub_right_motor.publish(Float64(data=0.0))
-            input("Calibration complete. Press Enter to begin powered assist...")
-
-            self.pub_shutdown.publish(Bool(data=False))
-            self.pub_left_motor.publish(Float64(data=0.0))
-            self.pub_right_motor.publish(Float64(data=0.0))
+            self.awaiting_confirmation = True
+            self.assist_confirmed.clear()
+            threading.Thread(target=self._wait_for_assist_confirmation, daemon=True).start()
+            self.latest_wheel_velocity = 0.0
             return
-        
+
         if step_result is None or step_result[0] is None:
             return
         
