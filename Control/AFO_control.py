@@ -9,6 +9,8 @@ from AFO import (Cluster,main_loop,SignalProcessor)
 import numpy as np
 import serial
 import time
+import message_filters
+
 
 class walker_control_node(Node):
     def __init__(self):
@@ -16,6 +18,8 @@ class walker_control_node(Node):
 
         self.current_scan = None
         self.encoder = None
+        self.latest_wheel_velocity = 0.0
+        self.last_sensor_update = self.get_clock().now()
         self.start_time = self.get_clock().now().nanoseconds / 1e9
         self.abs_time_history=[]
 
@@ -24,9 +28,13 @@ class walker_control_node(Node):
         self.pub_right_motor = self.create_publisher(Float64, '/right_wheel_velocity', 1)
         self.pub_left_motor = self.create_publisher(Float64, '/left_wheel_velocity', 1)
 
-        # 4. Subscribers (Note the QoS profile for LiDAR)
-        self.create_subscription(LaserScan, '/scan_legs_filtered', self.scan_callback, qos_profile_sensor_data)
-        self.create_subscription(JointState, '/encoder_data', self.encoder_callback, 1)
+        # 4. Subscribers (Note the QoS profile for LiDAR), synchronized so each control tick
+        # consumes a temporally-aligned scan/encoder pair instead of two independently-latest values.
+        scan_sub = message_filters.Subscriber(self, LaserScan, '/scan_legs_filtered', qos_profile=qos_profile_sensor_data)
+        encoder_sub = message_filters.Subscriber(self, JointState, '/encoder_data', qos_profile=1)
+
+        self.ts = message_filters.ApproximateTimeSynchronizer([scan_sub, encoder_sub], queue_size=10, slop=0.05)
+        self.ts.registerCallback(self.synced_callback)
 
         #rospy.on_shutdown(stop_motors)
         
@@ -35,12 +43,12 @@ class walker_control_node(Node):
         self.get_logger().info("=" * 50)        
 
         self.cluster = Cluster()
-        self.main = main_loop()
+        self.main = main_loop(fs=6)
         self.signal_process=SignalProcessor()
 
         #self.arm_timer = self.create_timer(0.5, self.arm_hardware_callback)
         self.timer = self.create_timer(1.0 / self.main.fs, self.control_loop_callback)
-
+        self.motor_timer = self.create_timer(1.0 / 30.0, self.motor_publish_callback)
 
     #Unlock ESP32 on Startup
     def arm_hardware_callback(self):
@@ -56,6 +64,8 @@ class walker_control_node(Node):
         try:
             #self.arm_timer.cancel()
             self.timer.cancel()
+            self.motor_timer.cancel()
+            self.latest_wheel_velocity = 0.0
             stop = Float64(data=0.0)
             self.pub_left_motor.publish(stop)
             self.pub_right_motor.publish(stop)
@@ -65,45 +75,56 @@ class walker_control_node(Node):
         except Exception as e:
             print(f"Could not broadcast stop frame: {e}")
 
-    def scan_callback(self, msg):
-        self.current_scan = msg
 
-    def encoder_callback(self, msg):
-        self.encoder = msg
+    def synced_callback(self, scan_msg, encoder_msg):
+        self.current_scan = scan_msg
+        self.encoder = encoder_msg
+        self.last_sensor_update = self.get_clock().now()
+
+    #Publishes the latest computed wheel velocity at a fixed 30Hz, decoupled from the
+    #(slower) perception/control rate. Fail-safe checkpoint: zeros the command if sensor
+    #data has gone stale, so a stalled control loop can't leave motors spinning indefinitely.
+    def motor_publish_callback(self):
+        stale = (self.get_clock().now() - self.last_sensor_update).nanoseconds / 1e9 > 0.3
+        velocity = 0.0 if stale else self.latest_wheel_velocity
+        self.pub_left_motor.publish(Float64(data=velocity))
+        self.pub_right_motor.publish(Float64(data=velocity))
 
 
-    #Control Loop 
+    #Control Loop
     def control_loop_callback(self):
 
         if self.current_scan is None:
-            self.get_logger().info("no scan")
+            self.get_logger().info("no scan", throttle_duration_sec=1.0)
             return
-        
+
         if self.encoder is None:
-            self.get_logger().info("no encoder data")
+            self.get_logger().info("no encoder data", throttle_duration_sec=1.0)
             return
-        
-        self.encoder_velocity = (self.encoder.velocity[0] + self.encoder.velocity[1]) / 2.0
-        self.current_time = (self.get_clock().now().nanoseconds / 1e9) - self.start_time
-        self.abs_time_history.append(self.current_time)
-    
-        collisions = self.cluster.process_scan(self.current_scan.angle_min,self.current_scan.angle_increment,self.current_scan.ranges,0) 
-        self.raw_left, self.raw_right, self.isoccluded,shutdown= self.cluster.cluster_find(collisions)
 
-        if shutdown is True:
-            self.stop_motor()
-            self.get_logger().error("Persistent leg occlusion. Stopping controller.")
-            rclpy.shutdown()
+        try:
+            self.encoder_velocity = (self.encoder.velocity[0] + self.encoder.velocity[1]) / 2.0
+            self.current_time = (self.get_clock().now().nanoseconds / 1e9) - self.start_time
+            self.abs_time_history.append(self.current_time)
+
+            collisions = self.cluster.process_scan(self.current_scan.angle_min,self.current_scan.angle_increment,self.current_scan.ranges,0)
+            self.raw_left, self.raw_right, self.isoccluded,shutdown= self.cluster.cluster_find(collisions)
+
+            if shutdown is True:
+                self.stop_motor()
+                self.get_logger().error("Persistent leg occlusion. Stopping controller.")
+                rclpy.shutdown()
+                return
+
+            if self.raw_left is None or self.raw_right is None:
+                return
+
+            was_calibrated = self.main.calibrated
+
+            step_result=self.main.step_from_legs(self.current_time,self.encoder_velocity,self.raw_left[0],self.raw_right[0],self.isoccluded)
+        except Exception as e:
+            self.get_logger().error(f"control_loop_callback failed, skipping tick: {e}", throttle_duration_sec=1.0)
             return
-        
-        if self.raw_left is None or self.raw_right is None:
-            return
-        
-
-        was_calibrated = self.main.calibrated
-        
-        step_result=self.main.step_from_legs(self.current_time,self.encoder_velocity,self.raw_left[0],self.raw_right[0],self.isoccluded)
-
 
         if not was_calibrated and self.main.calibrated:
 
@@ -119,13 +140,12 @@ class walker_control_node(Node):
         if step_result is None or step_result[0] is None:
             return
         
-        self.wheel_velocity, self.time_to_cal = step_result 
+        self.wheel_velocity, self.time_to_cal = step_result
 
-        # -- Run Calculations -- 
+        # -- Run Calculations --
         arm_msg = Bool(data=False)
         self.pub_shutdown.publish(arm_msg)
-        self.pub_left_motor.publish(Float64(data=self.wheel_velocity))
-        self.pub_right_motor.publish(Float64(data=self.wheel_velocity))
+        self.latest_wheel_velocity = self.wheel_velocity
 
 
 #ESP32 Hardware Reset on Shutdown

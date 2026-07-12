@@ -33,8 +33,7 @@ class SignalProcessor:
             return filtfilt(b, a, data)'''
 
 
-    def offline_data(self, left_current, right_current, time, encoder):
-        alpha = 0.35
+    def offline_data(self, left_current, right_current, time, encoder, alpha_scissor=0.35, alpha_pelvis=0.6):
         max_leg_jump = 0.20
 
         if left_current is None or right_current is None:
@@ -59,8 +58,8 @@ class SignalProcessor:
                 scissor_signal = raw_scissor
                 avg_position = raw_avg
             else:
-                scissor_signal = self.prev_scissor + alpha * (raw_scissor - self.prev_scissor)
-                avg_position = self.prev_avg + alpha * (raw_avg - self.prev_avg)
+                scissor_signal = self.prev_scissor + alpha_scissor * (raw_scissor - self.prev_scissor)
+                avg_position = self.prev_avg + alpha_pelvis * (raw_avg - self.prev_avg)
 
         self.left.append(left_raw)
         self.right.append(right_raw)
@@ -140,7 +139,6 @@ class WalkerController:
     
     def velocity_command(self,cadence,last_stride,velocity_gain):
         velocity_command = cadence*last_stride*velocity_gain
-        print(f'Velocity Command {velocity_command}, Cadence {cadence}, Last Stride {last_stride}, Velocity Gain {velocity_gain}')
         velocity_command = np.clip(velocity_command,0,1.2)
         return velocity_command
     
@@ -271,7 +269,6 @@ class Cluster:
                 self.prev_leg_r=right_leg
 
 
-        print(f"Right Leg {right_leg} Left Leg {left_leg}")
         return left_leg,right_leg,isoccluded,False
         
 
@@ -322,9 +319,11 @@ class main_loop:
         self.max_accel = 0.4  #m/s^2
         self.max_decel = 0.8  #m/s^2
         self.stop_accel = 1.2
+        self.attenuation_decel = 1.0  #m/s^2 -- faster than max_decel, slower than stop_accel
         self.pos_delta_v = (self.max_accel/self.fs) / self.wheel_radius
         self.neg_delta_v = (self.max_decel/self.fs) / self.wheel_radius
         self.stop_delta_v = (self.stop_accel/self.fs) / self.wheel_radius
+        self.attenuation_delta_v = (self.attenuation_decel/self.fs) / self.wheel_radius
         self.current_velocity = 0
         self.cadence = None
         self.prev_cadence = 1.0
@@ -364,13 +363,13 @@ class main_loop:
     def step_from_legs(self, current_time, encoder_velocity, left_x, right_x, isoccluded):
         if left_x is not None and right_x is not None and encoder_velocity is not None:
             left,right,scissor_signal,pelvis = self.signal.offline_data(left_x,right_x,current_time,encoder_velocity)
-            print(f'scissor window : {len(self.signal.scissor_window)} , calibrated: {self.calibrated}')
             self.pelvis_history.append(pelvis)
             self.encoder_data.append(encoder_velocity)
             self.encoder_time.append(current_time)
 
             if not self.calibrated:
-                if len(self.signal.scissor_window) >= 150 and not self.calibrated:
+                calibration_samples = int(self.fs * 15)
+                if len(self.signal.scissor_window) >= calibration_samples and not self.calibrated:
                     self.cal,self.x_d,self.velocity_gain,self.cal_stride,self.raw_frequency,self.time_to_cal= calibration.calibration(self.signal.right,self.signal.left,self.signal.scissor_window,self.fs,self.signal.cal_encoder_velocity,current_omega=self.oscillator.omega, wheel_radius=self.wheel_radius,timestamps=self.signal.true_timestamp)
                     
                     if self.cal == True: 
@@ -403,10 +402,6 @@ class main_loop:
 
             # before AFO update
             in_nominal_zone = -0.4556 < pelvis < -0.3556
-            in_close_zone = -0.3556 < pelvis < 0
-            in_far_zone = -0.55 < pelvis < -0.4556
-            in_stop_zone = not (in_far_zone or in_nominal_zone or in_close_zone)
-
 
             if self.prev_control_scissor is None:
                 scissor_speed = 0.0
@@ -421,7 +416,7 @@ class main_loop:
             else:
                 self.freeze_count = 0
 
-            freeze_detected = self.freeze_count >= 2
+            freeze_detected = self.freeze_count >= 1
             
             if self.afo_enabled:
                 if isoccluded or not in_nominal_zone:
@@ -461,13 +456,15 @@ class main_loop:
                 stride_used,
                 self.velocity_gain)
             
+
+            #Freeze Detection
             if freeze_detected:
                 linear_velocity = 0
                 self.control_state.append(4)
 
-                if freeze_detected and not self.prev_freeze_detected:
+                if not self.prev_freeze_detected:
                     self.freeze_detected_time.append(current_time)
-                self.prev_freeze_detected = freeze_detected
+
 
             elif -0.60 < pelvis < -0.5:
                 attenuation_factor=attenuation(pelvis,-0.60,-0.50)
@@ -487,22 +484,24 @@ class main_loop:
                 linear_velocity = 0 
                 self.control_state.append(4)  
 
+            self.prev_freeze_detected = freeze_detected
+
             #Wheel Velcoity Ramping/Attenuation/Smoothing
             target_wheel_velocity = linear_velocity / self.wheel_radius
             target_wheel_velocity = np.clip(target_wheel_velocity, 0, 3 / self.wheel_radius)
 
-            wheel_velocity = target_wheel_velocity
-
             if self.control_state[-1] == 4:
                 delta_limit = self.stop_delta_v
-            elif (wheel_velocity - self.current_velocity) > self.pos_delta_v:
+            elif self.control_state[-1] == 2:
+                delta_limit = self.attenuation_delta_v
+            elif (target_wheel_velocity - self.current_velocity) > self.pos_delta_v:
                 delta_limit = self.pos_delta_v
             else:
                 delta_limit= self.neg_delta_v
 
-            if wheel_velocity - self.current_velocity > delta_limit:
+            if target_wheel_velocity - self.current_velocity > delta_limit:
                 wheel_velocity = self.current_velocity + delta_limit
-            elif wheel_velocity - self.current_velocity < -delta_limit:
+            elif target_wheel_velocity - self.current_velocity < -delta_limit:
                 wheel_velocity = self.current_velocity - delta_limit
             else:
                 wheel_velocity = target_wheel_velocity
@@ -515,7 +514,6 @@ class main_loop:
                 print("Assist ramp complete. AFO tracking enabled.")
 
 
-            print(f'Velocty Comparison {self.cal_raw/(self.cadence*stride_used)}')
             wheel_velocity = np.clip(wheel_velocity,0,6)
             self.current_velocity = wheel_velocity
             self.velocity_history.append(wheel_velocity)
