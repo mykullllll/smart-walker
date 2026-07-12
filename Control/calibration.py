@@ -112,4 +112,4 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
         print(f' Current Velocity AFO {current_omega}')
         print(f'Velocity Gain {velocity_gain}')
         print('calibration successful')
-        return True, x_d, velocity_gain*0.95 ,last_stride, raw_frequency,time_to_cal  #Calibration Success
+        return True, x_d, velocity_gain*0.85 ,last_stride, raw_frequency,time_to_cal  #Calibration Success

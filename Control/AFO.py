@@ -325,7 +325,11 @@ class main_loop:
 
         #Freeze Detection
         self.freeze_window = deque()
-        self.freeze_window_duration = 0.35
+        self.freeze_detection_time = 0.8
+        self.freeze_window_duration = (
+            self.freeze_detection_time + 1.0 / self.fs
+        )
+
         self.freeze_motion_threshold = 0.025
         self.freeze_detection_armed = False
         self.ramp_complete_time = None
@@ -352,7 +356,9 @@ class main_loop:
         self.control_state = []  
         self.cadence_history=[]
         self.pelvis_history=[]
-        self.freeze_detected_time= []
+        self.freeze_detected_time_history= []
+        self.stride_used_history = []
+        self.target_wheel_history = []
 
         #Ramp of AFO
         self.afo_enabled = False
@@ -440,7 +446,7 @@ class main_loop:
                     value for _, value in self.freeze_window
                 ])
 
-                enough_history = window_age >= 0.30
+                enough_history = window_age >= self.freeze_detection_time
 
                 #Freeze Detection Conditions - 0.3 secondds of data frozen, legs moved less than 2.5 cm relative to each other, The person is inside pelvis range, Both legs are visible. 
                 freeze_detected = (
@@ -497,7 +503,7 @@ class main_loop:
                 linear_velocity = 0
                 self.control_state.append(4)
                 if not self.prev_freeze_detected:
-                    self.freeze_detected_time.append(current_time)
+                    self.freeze_detected_time_history.append(current_time)
                     print("-------- Freeze Detected -------")
                     print(f"Start of Freeze Detection: {self.freeze_window[0][0]} s")
                     print(f"Time of Detection: {current_time} s")
@@ -561,6 +567,10 @@ class main_loop:
             self.current_velocity = wheel_velocity
             self.velocity_history.append(wheel_velocity)
             self.commanded_timestamps.append(current_time)
+            
+
+            self.stride_used_history.append(stride_used)
+            self.target_wheel_history.append(target_wheel_velocity)
             
             return wheel_velocity,self.time_to_cal
                 

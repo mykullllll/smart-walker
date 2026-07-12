@@ -25,6 +25,9 @@ class walker_control_node(Node):
         self.assist_confirmed = threading.Event()
         self.start_time = self.get_clock().now().nanoseconds / 1e9
         self.abs_time_history=[]
+        self.actual_publish_history = []
+        self.actual_publish_time = []
+        self.stale_history = []
 
         # 3. Publishers
         self.pub_shutdown = self.create_publisher(Bool, '/shutdown', 1)
@@ -94,11 +97,26 @@ class walker_control_node(Node):
     #(slower) perception/control rate. Fail-safe checkpoint: zeros the command if sensor
     #data has gone stale, so a stalled control loop can't leave motors spinning indefinitely.
     def motor_publish_callback(self):
-        stale = (self.get_clock().now() - self.last_sensor_update).nanoseconds / 1e9 > 0.3
+        now = self.get_clock().now()
+        sensor_age = (now - self.last_sensor_update).nanoseconds / 1e9
+        stale = sensor_age > 0.3
+
         velocity = 0.0 if stale else self.latest_wheel_velocity
+
+        self.actual_publish_history.append(velocity)
+        self.actual_publish_time.append(
+            now.nanoseconds / 1e9 - self.start_time
+        )
+        self.stale_history.append(stale)
+
+        if stale:
+            self.get_logger().warning(
+                f"Motor command zeroed: sensor age={sensor_age:.3f}s",
+                throttle_duration_sec=0.5,
+                    )
+
         self.pub_left_motor.publish(Float64(data=velocity))
         self.pub_right_motor.publish(Float64(data=velocity))
-
 
     #Control Loop
     def control_loop_callback(self):
@@ -248,7 +266,9 @@ def main(args=None):
             print(f'Time in 0 Velocity: {100*(walker_node.main.control_state.count(4)/len(walker_node.main.control_state))} %')
             print(f'Time detected Frozen Gait {walker_node.main.freeze_detected_time}')
 
-            fig,axs = plt.subplots(nrows=2, ncols=2, figsize=(10, 8))
+
+
+            fig,axs = plt.subplots(nrows=3, ncols=2, figsize=(10, 8))
 
             axs[0,0].plot(walker_node.main.commanded_timestamps, walker_node.main.velocity_history, color='red', linestyle='--', label='Velocity Command')
             axs[0,0].plot(walker_node.main.encoder_time, walker_node.main.encoder_data, color='blue', label='Encoder Data Feedback')
@@ -280,6 +300,33 @@ def main(args=None):
             axs[1,1].set_yticklabels(["Assist", "Attenuated","Boost", "Stopped"])
             axs[1,1].legend()
             axs[1,1].grid(True)
+
+
+            axs[2, 0].plot(
+                walker_node.main.commanded_timestamps,
+                walker_node.main.stride_used_history,
+                label="Stride Used",
+            )
+            axs[2, 0].set_title("Stride Used")
+            axs[2, 0].set_ylabel("m")
+            axs[2, 0].grid(True)
+            axs[2, 0].legend()
+
+            axs[2, 1].plot(
+                walker_node.main.commanded_timestamps,
+                walker_node.main.target_wheel_history,
+                label="Target Wheel Velocity",
+            )
+            axs[2, 1].plot(
+                walker_node.actual_publish_time,
+                walker_node.actual_publish_history,
+                label="Actually Published",
+                alpha=0.8,
+            )
+            axs[2, 1].set_title("Target vs Published Command")
+            axs[2, 1].set_ylabel("rad/s")
+            axs[2, 1].grid(True)
+            axs[2, 1].legend()
         
             plt.tight_layout()
             plt.show()
