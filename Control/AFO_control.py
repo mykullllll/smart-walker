@@ -20,7 +20,6 @@ class walker_control_node(Node):
         self.current_scan = None
         self.encoder = None
         self.latest_wheel_velocity = 0.0
-        self.last_sensor_update = self.get_clock().now()
         self.awaiting_confirmation = False
         self.assist_confirmed = threading.Event()
         self.start_time = self.get_clock().now().nanoseconds / 1e9
@@ -28,6 +27,10 @@ class walker_control_node(Node):
         self.actual_publish_history = []
         self.actual_publish_time = []
         self.stale_history = []
+
+        now = self.get_clock().now()
+        self.last_scan_update = now
+        self.last_encoder_update = now
 
         # 3. Publishers
         self.pub_shutdown = self.create_publisher(Bool, '/shutdown', 1)
@@ -39,7 +42,16 @@ class walker_control_node(Node):
         scan_sub = message_filters.Subscriber(self, LaserScan, '/scan_legs_filtered', qos_profile=qos_profile_sensor_data)
         encoder_sub = message_filters.Subscriber(self, JointState, '/encoder_data', qos_profile=1)
 
-        self.ts = message_filters.ApproximateTimeSynchronizer([scan_sub, encoder_sub], queue_size=10, slop=0.05)
+
+        scan_sub.registerCallback(self.scan_arrival_callback)
+        encoder_sub.registerCallback(self.encoder_arrival_callback)
+
+
+        self.ts = message_filters.ApproximateTimeSynchronizer(
+            [scan_sub, encoder_sub],
+            queue_size=20,
+            slop=0.10,
+        )
         self.ts.registerCallback(self.synced_callback)
 
         #rospy.on_shutdown(stop_motors)
@@ -55,6 +67,19 @@ class walker_control_node(Node):
         #self.arm_timer = self.create_timer(0.5, self.arm_hardware_callback)
         self.timer = self.create_timer(1.0 / self.main.fs, self.control_loop_callback)
         self.motor_timer = self.create_timer(1.0 / 30.0, self.motor_publish_callback)
+
+    def scan_arrival_callback(self, scan_msg):
+        self.last_scan_update = self.get_clock().now()
+
+    def encoder_arrival_callback(self, encoder_msg):
+        self.last_encoder_update = self.get_clock().now()
+
+    def synced_callback(self, scan_msg, encoder_msg):
+        self.current_scan = scan_msg
+        self.encoder = encoder_msg
+        self.last_sensor_update = self.get_clock().now()
+
+
 
     #Unlock ESP32 on Startup
     def arm_hardware_callback(self):
@@ -81,12 +106,6 @@ class walker_control_node(Node):
         except Exception as e:
             print(f"Could not broadcast stop frame: {e}")
 
-
-    def synced_callback(self, scan_msg, encoder_msg):
-        self.current_scan = scan_msg
-        self.encoder = encoder_msg
-        self.last_sensor_update = self.get_clock().now()
-
     #Runs on a background thread so the ROS executor (and sensor callbacks) keep running
     #while waiting for the operator to confirm powered assist should begin.
     def _wait_for_assist_confirmation(self):
@@ -98,8 +117,19 @@ class walker_control_node(Node):
     #data has gone stale, so a stalled control loop can't leave motors spinning indefinitely.
     def motor_publish_callback(self):
         now = self.get_clock().now()
-        sensor_age = (now - self.last_sensor_update).nanoseconds / 1e9
-        stale = sensor_age > 0.3
+
+        scan_age = (
+            now - self.last_scan_update
+        ).nanoseconds / 1e9
+
+        encoder_age = (
+            now - self.last_encoder_update
+        ).nanoseconds / 1e9
+
+        stale = (
+            scan_age > 0.5
+            or encoder_age > 0.25
+        )
 
         velocity = 0.0 if stale else self.latest_wheel_velocity
 
@@ -111,9 +141,11 @@ class walker_control_node(Node):
 
         if stale:
             self.get_logger().warning(
-                f"Motor command zeroed: sensor age={sensor_age:.3f}s",
+                "Motor command zeroed: "
+                f"scan_age={scan_age:.3f}s, "
+                f"encoder_age={encoder_age:.3f}s",
                 throttle_duration_sec=0.5,
-                    )
+            )
 
         self.pub_left_motor.publish(Float64(data=velocity))
         self.pub_right_motor.publish(Float64(data=velocity))
@@ -264,7 +296,7 @@ def main(args=None):
             print(f'Time in Active Attenuation: {100*(walker_node.main.control_state.count(2)/len(walker_node.main.control_state))} %')
             print(f'Time in Boost: {100*(walker_node.main.control_state.count(3)/len(walker_node.main.control_state))} %')
             print(f'Time in 0 Velocity: {100*(walker_node.main.control_state.count(4)/len(walker_node.main.control_state))} %')
-            print(f'Time detected Frozen Gait {walker_node.main.freeze_detected_time}')
+            print(f'Time detected Frozen Gait {walker_node.main.freeze_detected_time_history}')
 
 
 
