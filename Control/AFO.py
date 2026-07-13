@@ -325,7 +325,7 @@ class main_loop:
 
         #Freeze Detection
         self.freeze_window = deque()
-        self.freeze_detection_time = 0.8
+        self.freeze_detection_time = 1.2
         self.freeze_window_duration = (
             self.freeze_detection_time + 1.0 / self.fs
         )
@@ -386,6 +386,7 @@ class main_loop:
                         self.prev_cadence = self.raw_frequency
                         self.oscillator.omega = 2 * np.pi * self.raw_frequency
                         self.cal_raw=self.raw_frequency*self.cal_stride
+                        self.previous_stride = self.cal_stride
 
 
                         self.assist_ramping = True
@@ -480,18 +481,29 @@ class main_loop:
 
 
             #Check if user in zone to input signal into AFO 
+
+            stride_used = self.previous_stride
             if cadence_update_zone and not isoccluded:
                 self.walker.stride_window.append(scissor_signal)
-                self.last_stride = self.walker.last_stride(self.walker.stride_window)
+                self.candidate_stride = self.walker.last_stride(self.walker.stride_window)
 
+                lower_bound = 0.80 * self.cal_stride
+                upper_bound = 1.20 * self.cal_stride
+
+                if (self.candidate_stride is not None and 
+                    lower_bound <= self.candidate_stride <= upper_bound):
+                        alpha = 0.10
+
+                        self.previous_stride = (
+                            (1 - alpha) * self.previous_stride
+                            + alpha * self.candidate_stride
+                        )
+                        stride_used=self.previous_stride
+
+                
+
+                
             #Velocity Calculation / Commands
-            if not cadence_update_zone:
-                stride_used = self.cal_stride
-            elif self.last_stride is None:
-                stride_used = self.cal_stride
-            else:
-                stride_used = self.last_stride
-
             feedforward_velocity = self.walker.velocity_command(
                 self.cadence,
                 stride_used,

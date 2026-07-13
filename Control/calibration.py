@@ -33,6 +33,7 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
     cycle_gains=[]
     cycle_freqs=[]
     normalized_smooth=[]
+    cycle_strides=[]
     cal_encoder_velocity=np.asarray(cal_encoder_velocity,dtype=float)
     timestamps=np.asarray(timestamps,dtype=float)
     time_to_cal = timestamps[-1] - timestamps[0] if len(timestamps) > 0 else None
@@ -67,6 +68,7 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
             continue
 
         cycle_stride=np.ptp(step_data)
+        cycle_strides.append(cycle_stride)
         cycle_encoder_velocity = np.mean(cal_encoder_velocity[mask]) * wheel_radius
         cycle_raw_speed = cycle_frequency * cycle_stride
         cycle_gain = cycle_encoder_velocity / (cycle_raw_speed + 1e-6)
@@ -109,6 +111,8 @@ def calibration(right,left,signal,sampling_frequency,cal_encoder_velocity,curren
         # 1. Calculate the walker's average forward speed over the last 50 frames
         x_d = (np.mean(right[-50:])+np.mean(left[-50:]))/2
         #print(f'FFT Frequency {fft_freq}')
+        print(f'Median Stride lengths during cal {np.median(cycle_strides):.3f}m')
+        print(f"Gold averaged-cycle stride: "f"{last_stride:.3f} m")
         print(f' Current Velocity AFO {current_omega}')
         print(f'Velocity Gain {velocity_gain}')
         print('calibration successful')
