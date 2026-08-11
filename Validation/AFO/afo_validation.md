@@ -29,11 +29,11 @@ Determine whether difference in input frequency or gain combination is has more 
 - eps_values = [1.5, 2, 2.5, 3, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,10]
 - freq_values = [0.5, 0.6, 0.8, 1.1, 1.5, 1.7, 1.9, 2.2]
 
-### Results
+### Results/Conclusion
 
 See the [adaptive frequency oscillator](Data/afo_validation_results.xlsx).
 
-As shown in sheet "Gain vs Initial Error" I calculated the Mean Average Error Cadence (Hz) for every gain and initial frequency error combination. In order to understand how initial frequency error vs gain combination affects MAE a two factor sum-of-squares decomposition was then used to partition the total variation in cadence MAE into:
+As shown in sheet "Gain vs Initial Error" I calculated the Mean Average Error Cadence (Hz) for every gain and initial frequency error combination. In order to understand how initial frequency error vs gain combination affects MAE a two factor sum-of-squares decomposition was then used to partition the total variation in cadence MAE into: 
 
 1. Variation from gain combination 
 Calculated from differences between each gain combinations mean MAE averaged across initial error conditions. Equation shown below:
@@ -51,7 +51,7 @@ $$
 \qquad
 $$
 
-Results of each summation of squares is shown below:
+From the data shown below we can say gain combination has a significantly less impact on convergence than where your initial frequency starts from. (Note: This calculation is ignoring gain combinations with either no convergence or nonsensical numbers) 
 
 | Source | SS | Total variation |
 |---|---:|---:|
@@ -59,3 +59,4 @@ Results of each summation of squares is shown below:
 | Initial-frequency error | 49.402305 | 89.38% |
 | Residual/interaction | 1.553066 | 2.81% |
 | Total | 55.274093 | 100% |
+
