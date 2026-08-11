@@ -13,7 +13,7 @@ The metrics used are shown below:
 - Cadence Bias (Hz): Mean of cadence error
 - Within Threshold (%): Percentage of time within threshold of 0.05 Hz.
 - Initial Frequency (Hz) 
-]
+
 
 In order to easily debug and make sure all parts of the program are working correctly, I've added features incrementally shown as "Version 1,2,3 etc..."  
 Note:(All Versions have the previous implementations included)
@@ -34,77 +34,24 @@ Determine whether difference in input frequency or gain combination is has more 
 See the [adaptive frequency oscillator](Data/afo_validation_results.xlsx).
 
 As shown in sheet "Gain vs Initial Error" I calculated the Mean Average Error Cadence (Hz) for every gain and initial frequency error combination. In order to understand how initial frequency error vs gain combination affects MAE a two factor sum-of-squares decomposition was then used to partition the total variation in cadence MAE into:
+
 1. Variation from gain combination 
 Calculated from differences between each gain combinations mean MAE averaged across initial error conditions. Equation shown below:
-
-
-2. Variation from initial frequency error
-Calculated from differences between each initial error conditions mean MAE, averaged across gain combinations. 
-
-
-## Sum-of-Squares Analysis
-
-Let \(y_{g,f}\) be cadence MAE for gain combination \(g\) and initial-error condition \(f\). Let \(G\) and \(F\) be the numbers of gains and initial-error conditions.
-
-### Means
 
 $$
 \bar y_g=\frac{1}{F}\sum_{f=1}^{F}y_{g,f},
 \qquad
+$$
+
+2. Variation from initial frequency error
+Calculated from differences between each initial error conditions mean MAE, averaged across gain combinations.
+
+$$
 \bar y_f=\frac{1}{G}\sum_{g=1}^{G}y_{g,f},
 \qquad
-\bar y=\frac{1}{GF}\sum_{g=1}^{G}\sum_{f=1}^{F}y_{g,f}
 $$
 
-### Sum of Squares
-
-$$
-SS_{\mathrm{Gain}}
-=
-F\sum_{g=1}^{G}(\bar y_g-\bar y)^2
-$$
-
-$$
-SS_{\mathrm{InitialError}}
-=
-G\sum_{f=1}^{F}(\bar y_f-\bar y)^2
-$$
-
-$$
-SS_{\mathrm{Total}}
-=
-\sum_{g=1}^{G}\sum_{f=1}^{F}(y_{g,f}-\bar y)^2
-$$
-
-$$
-SS_{\mathrm{Residual}}
-=
-SS_{\mathrm{Total}}
--
-SS_{\mathrm{Gain}}
--
-SS_{\mathrm{InitialError}}
-$$
-
-Therefore:
-
-$$
-SS_{\mathrm{Total}}
-=
-SS_{\mathrm{Gain}}
-+
-SS_{\mathrm{InitialError}}
-+
-SS_{\mathrm{Residual}}
-$$
-
-### Effect Percentages
-
-$$
-\text{Effect}_{i}
-=
-\frac{SS_i}{SS_{\mathrm{Total}}}\times100\%
-$$
+Results of each summation of squares is shown below:
 
 | Source | SS | Total variation |
 |---|---:|---:|
