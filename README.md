@@ -8,11 +8,12 @@ The current control system uses force torque sensors to measure conscious intent
 # Research Question
 Can a non-wearable 2D-LiDAR-sensed walker provide accurate, comfortable, gait-synchronized feedforward assistance despite the sensing constraints of a cheaper (6-10 Hz sampling rate, occlusion, noise)? 
 
-## Subclaims
-* The Hopf AFO tracks cadence with lower latency than windowed FFT/moving-average under this walker's actual noise and occlusion profile. (the estimator benchmark)
-* The occlusion-handling pipeline (DBSCAN + decision tree) preserves leg tracking through a stated fraction of synthetic occlusion events without losing calibration. (new result — doesn't exist yet)
-* The closed-loop controller tracks true user velocity within a stated error bound across trials/subjects.
-* Extracted gait metrics (stride length, symmetry, cadence variability) are usable outputs, ideally checked against a reference measurement. 
+### Subclaims
+
+  * The Hopf AFO tracks cadence with lower latency than windowed FFT/moving-average under this walker's actual noise and occlusion profile. (the estimator benchmark)
+  * The occlusion-handling pipeline (DBSCAN + decision tree) preserves leg tracking through a stated fraction of synthetic occlusion events without losing calibration. (new result — doesn't exist yet)
+  * The closed-loop controller tracks true user velocity within a stated error bound across trials/subjects.
+  * Extracted gait metrics (stride length, symmetry, cadence variability) are usable outputs, ideally checked against a reference measurement. 
 
 # Objectives
 1. Design a control system that can measure the users intent through a 2D LiDAR scan of the patients legs in order to command motor speeds in rhythm with the user.
@@ -21,10 +22,9 @@ Can a non-wearable 2D-LiDAR-sensed walker provide accurate, comfortable, gait-sy
 
 
 # How It Works
-It's difficult to create a real time control system that uses only 2D LiDAR scans due to the low 10 Hz sampling rate, occlusion, and noise from outside LiDAR scans. Because of this, traditional frequency calculation methods like a Fast Fourier Transforms (FFT) has built in latency proportional to it's window size, and resolution is also inversely proportional to the latency shown in the equations below. For a control system that needs to walk in rhythm with a patient that has irregular pacing i.e (changes in stride length and step timing) delay motor control which can cause discomfort and potential injuries when walking. 
-In order to solve this I implemented an Hopf Adaptive Frequency Oscillator (AFO) that uses a coupled set of differential equations that converges to the frequency of any input frequency over time. To make sure the input signal to the AFO doesn't have unpredictable noise and is filtered in real time I used a simple low pass filter. In order to make sure the patient is within a comfortable distance, I added an attenuation and freezing gait detection system in order to slow down, speed up, or stop, if the user is deviating from their normal gait. 
+It's difficult to create a real time control system that uses only 2D LiDAR scans due to the low 10 Hz sampling rate, occlusion, and noise from outside LiDAR scans. Because of this, traditional frequency calculation methods like a Fast Fourier Transforms (FFT) has built in latency proportional to it's window size, and resolution is also inversely proportional to the latency shown in the equations below. For a control system that needs to walk in rhythm with a patient that has irregular pacing i.e (changes in stride length and step timing) delayed motor control can cause discomfort and potential injuries when walking. 
 
-<img src="Docs//Media/Control_flow.png" alt="Control-system flowchart" width="800">
+In order to solve this I implemented an Hopf Adaptive Frequency Oscillator (AFO) that uses a coupled set of differential equations that converges to the frequency of an input frequency over time. To make sure the input signal to the AFO doesn't have unpredictable noise and is filtered in real time I used a simple low pass filter. In order to make sure the patient is within a comfortable distance, I added a corrective PID controller as well as a freezing gait detection system. 
 
 
 ## ROS2 Topics and sensor inputs
@@ -42,18 +42,16 @@ In order to solve this I implemented an Hopf Adaptive Frequency Oscillator (AFO)
 
 LiDAR scans are grouped using DBSCAN, a density based clustering algorithin that identifies groups of points as clusters. Using the centroid of each point, we define each leg as a single (x,y) point. 
 
-(Add picture)
-
-### Occlusion Detection
-There can be instances where DBSCAN can't identify 2 distinct clusters due to noise or occlusion of one leg behind the other. Below is the decision tree based on different possible scenarios. 
+To learn more about cluster detection check [Clustering Validation](/Validation/Clustering)
 
 <img src="Docs/Media/Occlusion_decision_tree.png" alt="Control-system flowchart" width="800">
 
 
-
-### Hopf Adaptive Frequency Oscillator (AFO) 
+## Feedforward Controller 
 
 The Hopf Adaptive Frequency Oscillator is a coupled set of differential equations shown below. As you run this equation over many time steps the input signal F(t) forces $\dot{\omega}$ to either speed up or slow down to match the frequency of the input signal. 
+
+[Feedforward Validation Documentation](/Validation/AFO/afo_validation.md)
 
 $$
 \begin{aligned}
@@ -68,25 +66,16 @@ $$
 
 https://github.com/user-attachments/assets/7dd72901-bb62-4123-a32d-af2526f6bd0f
 
-[Simulation Code](/HardwareInTheLoop/AFO_simulation.py)
-
 > [!NOTE]
 > * $\eta$ - Changes the rate of convergence of the AFO frequency to the input signal frequency
 > * $\epsilon$ - Changes sensitivity of $\dot{x}$ to the input signal
-> * $\mu$ - Baseline radius with no input signal. Represents the amplitude of your AFO.  
+> * $\mu$ - Baseline radius with no input signal. Represents the amplitude of your AFO.
 
 
-### Scissor Metric
-The input signal I chose was the difference in position of the left leg relative to the right. If we were to take the raw distance of each leg in terms of the walker we would have two different leg frequencies (Left and Right). This creates more complexity as we need to calculate when to use one leg frequency over the other and with a sampling rate of 6 Hz, it's common to miss heel strikes the moment they happen. In addition, this would create jittery and uncomfortable changes in velocity for the user. 
+## Feedback Controller
+A PID velocity controller was used as a corrective velocity when patients were outside of the desired zone. Further documentation on validation process and tests are here:
 
-The scissor metric eliminates this by having an entire stride (Step length of Left and Right) in one oscillation, which embodies the overall frequency of the user. 
-
-$$
-\begin{aligned}
-\ x_{signal} &= x_{left} - x_{right}
-\end{aligned}
-$$
-
+[Feedback Validation Documentation](/Validation/PID/PID_Validation_Document.md)
 
 ### Calibration
 Initial gait metrics of the user is needed to calibrate the necessary speed / frequency of their gait patterns. During this period the user pushes the walker themselves. Average standard deviation is calculated to ensure smooth walking during calibration and the below equation is used to calculate necessary gain to compensate for the difference in leg movement vs needed speed of the walker. 
@@ -97,39 +86,14 @@ $$
 \end{aligned}
 $$
 
-### Velocity Command
-$$
-\begin{aligned}
-\ Velocity_{AFO} &= Frequency * Stride Length * Velocity Gain \\
-\end{aligned}
-$$
 
-### Safety Features
-Rate limiter was added to limit the maximum acceleration of wheel to ensure smooth motion. 
+# Startup Commands
+* `cd ~/ros2_ws`
+* `ros2_load`
+* `ros2 launch rplidar_ros gait_lidar_launch.py`
+* `docker run -it --rm -v /dev:/dev --privleged --net=host microros/micro-ros-agen-jazzy serial --dev /dev/ttyUSB1 =b 115200`
+* `python3 ~/ros2_ws/src/control_system/control_system/AFO_control.py`
 
-## Zone Calculation:
-* Normal (0.60 < pelvis < 0.28): - If the user is in the desired zone, velocity will be normally calculated 
-* Boost (0.28 < pelvis < 0):  - If the user is too close to the walker the velocity will increase
-* Attenuation (0.60 < pelvis < 0.50): - If the user is too far from the walker the velocity will decrease 
-* Frozen (0.75 < pelvis and frozen) - If the user freezes or is too far from the walker motor commands stop and reverse to a comfortable position.
-
-
-# Validation
-Convergence time for the AFO varies depending on gain tuning. In order to find the lowest convergence time for different initial average frequencies, I created a nested for loop with 20 different gains from (1,10) and an initial omega of 1Hz to calculate the lowest convergence time. I found that it's less important what gain values to choose, than your initial freqeuncy. 
-
-For further details look into: [Adapative Frequency Oscillator Gain Validation Documentation](/Docs)
-
-[Adapative Frequency Oscillator Gain Validation Code](/HardwareInTheLoop/AFO_validation.py)
-
-# Commands
-`cd ~/ros2_ws`
-`ros2_load`
-`ros2 launch rplidar_ros gait_lidar_launch.py`
-`ros2_load`
-`docker run -it --rm -v /dev:/dev --privleged --net=host microros/micro-ros-agen-jazzy serial --dev /dev/ttyUSB1 =b 115200`
-`ros2_load`
-`python3 ~/ros2_ws/src/control_system/control_system/AFO_control.py`
-`
 
 # Example Output
 Calibration time: 14.833203554153442 s  
