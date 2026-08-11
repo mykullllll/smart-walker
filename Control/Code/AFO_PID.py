@@ -2,7 +2,7 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 
 try:
-    from Control import calibration
+    from Control.Code import calibration
 except ImportError:
     import calibration
 

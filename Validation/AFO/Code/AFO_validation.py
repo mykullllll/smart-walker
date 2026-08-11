@@ -1,8 +1,17 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter, find_peaks
-from Control.AFO import AdaptiveFrequencyOscillator
 import pandas as pd
+
+import sys
+from pathlib import Path
+
+project_root = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(project_root))
+
+from Control.Code.AFO_PID import AdaptiveFrequencyOscillator
+
+
 
 
 class sig():
@@ -64,8 +73,6 @@ class stride_validation():
         return self.stride, len(self.stride)
 
 
-
-
 def post_calc(abs_freq_error,cadence_hist,omega_dot_history,convergence_history):
 
     omega_dot_history = np.asarray(omega_dot_history)
@@ -89,6 +96,7 @@ results=[]
 eta_values = [1.5, 2, 2.5, 3, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,10]
 eps_values = [1.5, 2, 2.5, 3, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,10]
 freq_values = [0.5, 0.6, 0.8, 1.1, 1.5, 1.7, 1.9, 2.2]
+#initial_freq = [0.5, 0.6, 0.8, 1.1, 1.5, 1.7, 1.9, 2.2]
 
 
 for index_freq in freq_values:
@@ -116,6 +124,7 @@ for index_freq in freq_values:
             convergence_variable_freq=[]
             omega_dot_history_const=[]
             convergence_history=[]
+            cadence_error_const=[]
 
             rate_convergence=None
             threshold=0.05
@@ -135,15 +144,14 @@ for index_freq in freq_values:
                 scissor_signal_const, true_freq_const = signal_gen.freq_const(amplitude_const=0.5,frequency_const=index_freq)
 
                 #_, cadence = afo_variable.step_afo(scissor_signal)
-                _, cadence_const,omegadot = afo_constant.step_afo(scissor_signal_const)
+                cadence_const = afo_constant.step_afo(scissor_signal_const)
                 
                 abs_freq_error_const.append(np.abs(true_freq_const-cadence_const))
                 cadence_hist_const.append(cadence_const)
                 true_freq_hist_const.append(true_freq_const)
                 input_signal_const.append(scissor_signal_const)
-                omega_dot_history_const.append(omegadot)
-
                 convergence_history.append(abs(cadence_const - true_freq_const))
+                cadence_error_const.append(cadence_const-true_freq_const)
                 #Convergence Check Constant, Need to change per cycle convergence
                 if abs(cadence_const - true_freq_const) < threshold:
                     convergence_tracker_const+=1
@@ -165,22 +173,31 @@ for index_freq in freq_values:
                 + freq_error_avg_const
                 + max_error_const
                 + std_cadence_const)
-            
+
+            cadence_errors = (np.asarray(cadence_hist_const)- np.asarray(true_freq_hist_const))
+            cadence_mae = np.mean(np.abs(cadence_errors))
+            cadence_rmse = np.sqrt(np.mean(cadence_errors**2))
+            cadence_bias = np.mean(cadence_errors)
+            within_tolerance_percent = (np.mean(np.abs(cadence_errors) <= threshold) * 100)
+            initial_freq_error = np.abs(index_freq - 1)
+
+
             score.append(current_score)
             results.append((current_score, index_freq, eta, eps, rate_convergence_const,
-                            freq_error_avg_const, max_error_const, std_cadence_const,omega_dot_history_const,convergence_history))
+                             max_error_const,cadence_mae,cadence_rmse,cadence_bias,within_tolerance_percent,initial_freq_error))
 
 columns = [
     "score",
     "freq_hz",
     "eta",
     "eps",
-    "convergence_s",
-    "avg_error_hz",
-    "max_error_hz",
-    "cadence_std",
-    "omega_dot average",
-    'convergence_history'
+    "Rate of Convergence (s)",
+    "Max Absolute Error Cadence (Hz)",
+    "Mean Average Error Cadence (Hz)",
+    "Root Mean Square Error Cadence (Hz)",
+    'Cadence Bias (Hz)',
+    "Within Threshold (%)",
+    "Initial Frequency Error (Hz)",
 ]
 
 pd.set_option("display.max_rows", None)
@@ -188,6 +205,18 @@ pd.set_option("display.max_columns", None)
 pd.set_option("display.width", None)
 results_table = pd.DataFrame(results, columns=columns)
 results_table = results_table.sort_values(["freq_hz"])
+
+
+output_directory = Path(__file__).resolve().parents[1] / "Data"
+output_directory.mkdir(parents=True, exist_ok=True)
+
+output_path = output_directory / "afo_validation_results.csv"
+
+results_table.to_csv(output_path, index=False)
+
+print(f"Saved results to: {output_path}")
+
+
 top_10_per_freq = (
     results_table
     .sort_values(["freq_hz", "score"])
