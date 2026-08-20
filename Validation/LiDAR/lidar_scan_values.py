@@ -1,8 +1,9 @@
-"""Record ROS 2 ``sensor_msgs/LaserScan`` messages for offline validation.
+"""Record labeled ROS 2 ``LaserScan`` intervals for offline validation.
 
-Each CSV row contains one complete scan. The ``ranges`` and ``intensities``
-columns are JSON arrays so scan boundaries and all LaserScan metadata are
-preserved.
+For each trial, press Enter when the initial position is stable. The recorder
+captures a fixed interval, pauses while the participant moves, and then waits
+for Enter again before capturing the final stable interval. Each CSV row
+contains one complete scan with its trial and phase labels.
 
 Example:
     python3 lidar_scan_values.py --ros-args \
@@ -10,11 +11,12 @@ Example:
         -p output_path:=Validation/LiDAR/Data/bare_thigh_trial.csv
 
 Stop the recorder with Ctrl-C. The file is flushed periodically and closed
-cleanly on shutdown.
+cleanly on shutdown. Only scans received during an active interval are saved.
 """
 
 import csv
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +27,9 @@ from sensor_msgs.msg import LaserScan
 
 
 CSV_FIELDS = (
+    "trial_index",
+    "phase",
+    "interval_elapsed_sec",
     "scan_index",
     "receive_time_sec",
     "header_time_sec",
@@ -49,6 +54,7 @@ class LidarScanRecorder(Node):
 
         self.declare_parameter("topic", "/scan_legs_filtered")
         self.declare_parameter("output_path", "")
+        self.declare_parameter("interval_duration_sec", 5.0)
         self.declare_parameter("flush_every_n_scans", 10)
         self.declare_parameter("max_scans", 0)
 
@@ -58,8 +64,16 @@ class LidarScanRecorder(Node):
 
         self.flush_every = max(1, flush_every)
         self.max_scans = max(0, int(self.get_parameter("max_scans").value))
+        self.interval_duration_sec = max(
+            0.1, float(self.get_parameter("interval_duration_sec").value)
+        )
         self.scan_count = 0
+        self.trial_index = 1
         self._closed = False
+        self._active_phase = None
+        self._interval_start_ns = None
+        self._state_lock = threading.Lock()
+        self._interval_finished = threading.Event()
 
         if configured_path:
             self.output_path = Path(configured_path).expanduser()
@@ -79,13 +93,107 @@ class LidarScanRecorder(Node):
             self.scan_callback,
             qos_profile_sensor_data,
         )
+        self._interval_timer = self.create_timer(0.05, self._check_interval)
+
+        self._input_thread = threading.Thread(
+            target=self._input_loop,
+            name="lidar-validation-input",
+            daemon=True,
+        )
 
         self.get_logger().info(f"Recording LaserScan messages from {topic}")
         self.get_logger().info(f"Writing scans to {self.output_path.resolve()}")
+        self.get_logger().info(
+            f"Each stable interval lasts {self.interval_duration_sec:.1f} seconds"
+        )
+        self._input_thread.start()
+
+    def _input_loop(self) -> None:
+        """Guide the experimenter through initial and final stable intervals."""
+        while rclpy.ok() and not self._closed:
+            try:
+                input(
+                    f"\nTrial {self.trial_index}: place the legs at the INITIAL "
+                    "position, then press Enter to record..."
+                )
+            except EOFError:
+                self.get_logger().warning(
+                    "Terminal input is unavailable; no recording interval started"
+                )
+                return
+
+            if not rclpy.ok() or self._closed:
+                return
+            self._start_interval("initial")
+            if not self._wait_for_interval():
+                return
+
+            try:
+                input(
+                    f"Trial {self.trial_index}: move the legs to the FINAL "
+                    "position. Once stable, press Enter to record..."
+                )
+            except EOFError:
+                return
+
+            if not rclpy.ok() or self._closed:
+                return
+            self._start_interval("final")
+            if not self._wait_for_interval():
+                return
+
+            self.get_logger().info(f"Trial {self.trial_index} complete")
+            self.trial_index += 1
+
+    def _wait_for_interval(self) -> bool:
+        """Wait without preventing clean ROS shutdown."""
+        while rclpy.ok() and not self._closed:
+            if self._interval_finished.wait(timeout=0.2):
+                return True
+        return False
+
+    def _start_interval(self, phase: str) -> None:
+        with self._state_lock:
+            self._active_phase = phase
+            self._interval_start_ns = self.get_clock().now().nanoseconds
+            self._interval_finished.clear()
+        self.get_logger().info(
+            f"Trial {self.trial_index} {phase} interval started"
+        )
+
+    def _check_interval(self) -> None:
+        """Stop the active interval after its configured duration."""
+        with self._state_lock:
+            if self._active_phase is None or self._interval_start_ns is None:
+                return
+            elapsed_sec = (
+                self.get_clock().now().nanoseconds - self._interval_start_ns
+            ) / 1e9
+            if elapsed_sec < self.interval_duration_sec:
+                return
+            finished_phase = self._active_phase
+            self._active_phase = None
+            self._interval_start_ns = None
+            self._file.flush()
+            self._interval_finished.set()
+
+        self.get_logger().info(
+            f"Trial {self.trial_index} {finished_phase} interval complete"
+        )
 
     def scan_callback(self, message: LaserScan) -> None:
-        """Write a newly received scan without resampling or duplicating it."""
-        receive_time_sec = self.get_clock().now().nanoseconds / 1e9
+        """Write a scan only while a labeled interval is active."""
+        receive_time_ns = self.get_clock().now().nanoseconds
+
+        with self._state_lock:
+            if self._active_phase is None or self._interval_start_ns is None:
+                return
+            phase = self._active_phase
+            interval_elapsed_sec = (
+                receive_time_ns - self._interval_start_ns
+            ) / 1e9
+
+        receive_time_sec = receive_time_ns / 1e9
         header_time_sec = (
             float(message.header.stamp.sec)
             + float(message.header.stamp.nanosec) / 1e9
@@ -93,6 +201,9 @@ class LidarScanRecorder(Node):
 
         self._writer.writerow(
             {
+                "trial_index": self.trial_index,
+                "phase": phase,
+                "interval_elapsed_sec": f"{interval_elapsed_sec:.9f}",
                 "scan_index": self.scan_count,
                 "receive_time_sec": f"{receive_time_sec:.9f}",
                 "header_time_sec": f"{header_time_sec:.9f}",
@@ -128,11 +239,15 @@ class LidarScanRecorder(Node):
 
     def close(self) -> None:
         """Flush and close the output file exactly once."""
-        if self._closed:
-            return
-        self._file.flush()
-        self._file.close()
-        self._closed = True
+        with self._state_lock:
+            if self._closed:
+                return
+            self._active_phase = None
+            self._interval_start_ns = None
+            self._interval_finished.set()
+            self._file.flush()
+            self._file.close()
+            self._closed = True
         self.get_logger().info(
             f"Saved {self.scan_count} scans to {self.output_path.resolve()}"
         )
@@ -155,4 +270,3 @@ def main(args=None) -> None:
 
 if __name__ == "__main__":
     main()
-
