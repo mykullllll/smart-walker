@@ -20,10 +20,11 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 import pandas as pd
 from pathlib import Path
-from Control.Code.AFO_PID import Cluster
+from AFO_PID import Cluster
 import select
 from datetime import datetime
 from pathlib import Path
+import numpy as np
 
 
 columns = [
@@ -74,8 +75,9 @@ class laser_scan(Node):
             return
         current_time = self.get_clock().now()
         elapsed_time= current_time - self.start_time
+        elapsed_time = int(elapsed_time.nanoseconds / 1e9)  # Convert to seconds
 
-        if elapsed_time >=5.0:
+        if elapsed_time >= 5:
             self.state = True
             self.completed_trials+=1
             print("\n==================================================")
@@ -88,7 +90,14 @@ class laser_scan(Node):
                 rclpy.shutdown()
 
             return
-        collisions = self.cluster.process_scan(self.current_scan.angle_min, self.current_scan.angle_increment, self.current_scan.ranges, 0)
+
+        ranges = np.asanyarray(scan_msg.ranges, dtype=float)
+        if ranges.ndim != 1:
+            self.get_logger().error("Scan ranges must be a 1D array.")
+            return
+
+        
+        collisions =Cluster.process_scan(scan_msg.angle_min, scan_msg.angle_increment, ranges, 0)
 
         self.results.append((
             json.dumps(collisions.tolist()),
