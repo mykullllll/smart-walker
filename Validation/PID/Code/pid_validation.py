@@ -18,7 +18,7 @@ control_code_directory = project_root / "Control" / "Code"
 if str(control_code_directory) not in sys.path:
     sys.path.insert(0, str(control_code_directory))
 
-from AFO_PID import main_loop
+from Control.Code.AFO_PID import main_loop
 
 
 

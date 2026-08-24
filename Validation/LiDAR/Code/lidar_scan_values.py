@@ -20,7 +20,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 import pandas as pd
 from pathlib import Path
-from AFO_PID import Cluster
+from Control.Code.AFO_PID import Cluster
 import select
 from datetime import datetime
 from pathlib import Path
@@ -29,7 +29,9 @@ import numpy as np
 
 columns = [
     "Collision values",
-    "Time (s)"
+    "Time (s)",
+    "Trial ID"
+    
 ]
 
 class laser_scan(Node):
@@ -39,6 +41,7 @@ class laser_scan(Node):
         self.scan_message = []
         self.results = []
         self.completed_trials=0
+        self.trial_id = "thigh_0.1"
 
         self.monitor_timer = self.create_timer(0.1, self.monitor)
         output_directory = Path(__file__).resolve().parents[1] / "Control_system"
@@ -97,11 +100,12 @@ class laser_scan(Node):
             return
 
         
-        collisions =Cluster.process_scan(scan_msg.angle_min, scan_msg.angle_increment, ranges, 0)
+        collisions=self.cluster.process_scan(scan_msg.angle_min, scan_msg.angle_increment, ranges, 0)
 
         self.results.append((
             json.dumps(collisions.tolist()),
             elapsed_time,
+            self.trial_id,
         ))
 
 

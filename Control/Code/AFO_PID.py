@@ -197,7 +197,7 @@ class Cluster:
 
         self.occlusions_length = 0
 
-    def cluster_find(self, collisions):
+    def cluster_find(self, collisions,eps,min_samples):
         isoccluded = False
 
         if len(collisions) == 0:
@@ -207,7 +207,7 @@ class Cluster:
                 return None, None, isoccluded, True
             return None, None, isoccluded, False
 
-        cluster = DBSCAN(eps=4e-2, min_samples=3).fit(collisions)
+        cluster = DBSCAN(eps=eps, min_samples=min_samples).fit(collisions)
         labels = cluster.labels_
         unique_labels = [l for l in np.unique(labels) if l != -1]
         print(f"Number of clusters found: {len(unique_labels)}")
