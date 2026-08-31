@@ -3,21 +3,15 @@ from pathlib import Path
 from matplotlib import pyplot as plt
 from matplotlib.ticker import FormatStrFormatter
 import csv
-from pathlib import Path
 from itertools import product
 import random
 import math
 from collections import deque
 
-
-
-
 project_root = Path(__file__).resolve().parents[3]
-control_code_directory = project_root / "Control" / "Code"
-
-if str(control_code_directory) not in sys.path:
-    sys.path.insert(0, str(control_code_directory))
-
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+    
 from Control.Code.AFO_PID import main_loop
 
 
@@ -25,7 +19,7 @@ from Control.Code.AFO_PID import main_loop
 k_p_values = [0,0.25,0.5,1.0,1.5,2.0,2.5,3.0,4.0,5.0,6.0]
 k_i_values = [0.0, 0.05, 0.10, 0.20,0.3,0.4,0.5]
 k_d_values = [0.0, 0.02, 0.05, 0.10,0.15,0.20,0.25,0.4,0.5,0.6,0.7,0.8,2.0,3.0,4.0,5.0,9.0]
-noise_seeds = list(range(1, 51))
+noise_seeds = [0]
 
 
 def make_controller(k_p,k_i,k_d,fs=6,wheel_radius=0.1143):
@@ -62,7 +56,7 @@ def make_controller(k_p,k_i,k_d,fs=6,wheel_radius=0.1143):
     return controller
 
 
-def run_trial(controller,simulation_steps=100,latency_sensor_s= 0.3,latency_wheel_s=0.125,position_noise_std_m=0.0,noise_seed=1234):
+def run_trial(controller,simulation_steps=100,position_noise_std_m=0.0,noise_seed=1234):
 
 
     current_time_history=[]
@@ -73,6 +67,15 @@ def run_trial(controller,simulation_steps=100,latency_sensor_s= 0.3,latency_whee
     acceleration_window = []
     jerk_window=[]
     wheel_command=[]
+    position_queue = []
+
+    #Latency
+    k_dynamic = 0.968507993
+    tau = 0.686005288
+    prev_latent_velocity = 0
+    prev_time = 0
+    initial_position = -0.50
+    position_queue = deque([initial_position])
 
 
     #Metrics
@@ -95,14 +98,10 @@ def run_trial(controller,simulation_steps=100,latency_sensor_s= 0.3,latency_whee
     disturbance_interval_s = 2.0
 
     disturbance_interval_steps = round(disturbance_interval_s * controller.fs)
-    initial_position = -0.50
     dt = 1.0 / controller.fs
 
     #Latency 2 steps delayed
-    latency_sensor_steps = max(0,round(latency_sensor_s / dt),)
-    latency_velocity_command_steps = max(0,round(latency_wheel_s / dt),)
-    position_queue = deque([initial_position]*latency_sensor_steps)
-    velocity_queue = deque([0]*latency_velocity_command_steps)
+
     
     average_position = initial_position
 
@@ -110,22 +109,17 @@ def run_trial(controller,simulation_steps=100,latency_sensor_s= 0.3,latency_whee
     for index in range(simulation_steps):
         position_noise = rng.gauss(0.0,position_noise_std_m,)
         noisy_position = average_position + position_noise
-
-
         disturbance_index = (index // disturbance_interval_steps) % len(disturbance_velocities)
         patient_velocity = disturbance_velocities[disturbance_index]
-
-
         current_time = index * dt
-
-
-        # Equal positions are sufficient for a position-only test.
         position_queue.append(noisy_position)
         measured_position = position_queue.popleft()
 
-        left_x=measured_position
-        right_x=measured_position
-            
+
+
+        left_x = measured_position
+        right_x = measured_position
+
         result = controller.step_from_legs(
             current_time=current_time,
             encoder_velocity=0.0,
@@ -134,15 +128,15 @@ def run_trial(controller,simulation_steps=100,latency_sensor_s= 0.3,latency_whee
             isoccluded=False,
         )
 
-        if result is None or result[0] is None:
+        if result is None or result[0] is None: 
             continue
         position_error = (controller.walker.error_history[-1])
         commanded_velocity_linear = result[0] * controller.wheel_radius
-        velocity_queue.append(commanded_velocity_linear)
-        commanded_velocity_linear = velocity_queue.popleft()
+         
+        latent_velocity = k_dynamic * commanded_velocity_linear + (prev_latent_velocity - k_dynamic*commanded_velocity_linear) * math.e ** (-(current_time - prev_time)/tau)
 
-        average_position+= (patient_velocity * dt) - (commanded_velocity_linear * dt)
-        wheel_command.append(commanded_velocity_linear)
+        average_position+= (patient_velocity * dt) - (latent_velocity * dt)
+        wheel_command.append(latent_velocity)
        
         if len(wheel_command) > 1:
             previous_acceleration = acceleration
@@ -193,6 +187,9 @@ def run_trial(controller,simulation_steps=100,latency_sensor_s= 0.3,latency_whee
         if average_position > controller.x_d :
             overshoot_status=True
 
+        prev_latent_velocity = latent_velocity
+        prev_time = current_time
+
 
     #Post Calculations  
     rmse = math.sqrt(sum(position_error_history_square) / len(position_error_history_square))
@@ -209,10 +206,9 @@ def run_trial(controller,simulation_steps=100,latency_sensor_s= 0.3,latency_whee
         "Root Mean Square Jerk (RMS)": rms_jerk,
         "Max error (m)": peak_error,
         "Overshoot": overshoot_status,
-        "Sensor Latency LiDAR (s)": latency_sensor_s,
-        "Motor Command Latency (s)": latency_wheel_s,
         "Position Noise Standard Deviation": position_noise_std_m,
-        "Noise Seed": noise_seed,
+        "Motor Gain": k_dynamic,
+        "Motor Time Constant (s)": tau,
     }
 
     print(
@@ -225,10 +221,9 @@ def run_trial(controller,simulation_steps=100,latency_sensor_s= 0.3,latency_whee
         f"Root Mean Square Jerk (RMS)= {rms_jerk} "
         f"Max error (m) = {peak_error} m "
         f"Overshoot = {overshoot_status}], "
-        f" ['Sensor Latency LiDAR (s)'] {latency_sensor_s}, "
-        f"| {result['Motor Command Latency (s)']} "
-        f"| {result['Position Noise Standard Deviation']} "
-        f"| {result['Noise Seed']} |",
+        f"Positional Noise {position_noise_std_m} "
+        f"Motor Gain {k_dynamic}",
+        f"Motor Time Constant (s) {tau}"
     )
 
     return metrics
@@ -240,7 +235,7 @@ def sweep(k_p_values,k_i_values,k_d_values):
     for k_p,k_i,k_d in product(k_p_values,k_i_values,k_d_values):
         for noise_seed in noise_seeds:
             controller = make_controller(k_p,k_i,k_d)
-            metrics = run_trial(controller,position_noise_std_m=0.01,noise_seed=noise_seed)
+            metrics = run_trial(controller,position_noise_std_m=0.00,noise_seed=noise_seed)
             gain_results.append(metrics)
 
     return gain_results
@@ -257,10 +252,9 @@ def save_csv(gain_results,csv_path):
         "Root Mean Square Jerk (RMS)",
         "Max error (m)",
         "Overshoot",
-        "Sensor Latency LiDAR (s)",
-        "Motor Command Latency (s)",
         "Position Noise Standard Deviation",
-        "Noise Seed",
+        "Motor Gain",
+        "Motor Time Constant (s)",
         
     ]
 
@@ -284,10 +278,10 @@ def save_markdown(gain_results,markdown_path):
     with markdown_path.open("w") as md:
         print("# Gain Results\n", file=md)
         print(
-            "| k_p| k_i | k_d | Integral Absolute Error | Root Mean Square Error (RMSE) | Root Mean Square Acceleration (RMS) | Root Mean Square Jerk (RMS) | Max error (m) | Overshoot | Sensor Latency LiDAR (s) | Motor Command Latency (s)| Position Noise Standard Deviation| Noise Seed |",
+            "| k_p| k_i | k_d | Integral Absolute Error | Root Mean Square Error (RMSE) | Root Mean Square Acceleration (RMS) | Root Mean Square Jerk (RMS) | Max error (m) | Overshoot | Position Noise Standard Deviation| Motor Gain | Motor Time Constant (s)",
             file=md,
         )
-        print("|---:|---:|---:|---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|", file=md)
+        print("|---:|---:|---:|---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|", file=md)
 
         for result in gain_results:
             print(
@@ -299,11 +293,10 @@ def save_markdown(gain_results,markdown_path):
                 f"| {result['Root Mean Square Acceleration (RMS)']}"
                 f"| {result['Root Mean Square Jerk (RMS)']}"
                 f"| {result['Max error (m)']} "
-                f"| {result['Overshoot']} "
-                f"| {result['Sensor Latency LiDAR (s)']} "
-                f"| {result['Motor Command Latency (s)']} |",
+                f"| {result['Overshoot']} | ",
                 f"| {result['Position Noise Standard Deviation']} |",
-                f"| {result['Noise Seed']} |",
+                f"| {result['Motor Gain']} |",
+                f"| {result['Motor Time Constant (s)']} |",
 
                 file=md,
             )

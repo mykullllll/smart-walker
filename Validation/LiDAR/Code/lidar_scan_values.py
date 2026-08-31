@@ -78,9 +78,9 @@ class laser_scan(Node):
             return
         current_time = self.get_clock().now()
         elapsed_time= current_time - self.start_time
-        elapsed_time = int(elapsed_time.nanoseconds / 1e9)  # Convert to seconds
+        elapsed_time = float(elapsed_time.nanoseconds / 1e9)  # Convert to seconds
 
-        if elapsed_time >= 5:
+        if elapsed_time >= 5.0:
             self.state = True
             self.completed_trials+=1
             print("\n==================================================")

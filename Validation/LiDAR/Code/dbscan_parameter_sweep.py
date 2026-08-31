@@ -18,23 +18,20 @@ columns = [
     "trial_id",
 ]
 
-epsilon = np.arange(0.01,3,0.01)
+epsilon = np.arange(0.01,1,0.01)
 n_step = np.arange(1,10,1)
-
-input_folder = Path("data")
+lidar_directory = Path(__file__).resolve().parents[1]
+input_folder = lidar_directory / "Data" / "Trials"
 def export_csv(results):
 
-    output_directory = Path(__file__).resolve().parents[1] / "Data"
-    output_directory.mkdir(parents=True, exist_ok=True)
-    output_path = output_directory / f"sweep_results.csv"
-
+    lidar_directory = Path(__file__).resolve().parents[1]
+    output_directory = lidar_directory / "Data" / "Results"
     results_table = pd.DataFrame(results, columns=columns)
-    results_table.to_csv(output_path, index=False)
+    results_table.to_csv(output_directory, index=False)
 
 
 results=[]
 for excel_file in input_folder.glob("*.csv"):
-    cluster= Cluster()
     print(f"Processing {excel_file.name}")
     df = pd.read_csv(excel_file)
 
@@ -45,6 +42,7 @@ for excel_file in input_folder.glob("*.csv"):
 
     for eps in epsilon:
         for n in n_step:
+            cluster= Cluster()
             for cell in df["Collision values"]:
 
                 coordinate_pairs = np.asarray(json.loads(cell),dtype=float)
