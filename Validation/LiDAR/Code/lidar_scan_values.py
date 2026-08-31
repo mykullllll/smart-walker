@@ -20,7 +20,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 import pandas as pd
 from pathlib import Path
-from Control.Code.AFO_PID import Cluster
+from AFO_PID import Cluster
 import select
 from datetime import datetime
 from pathlib import Path
@@ -29,9 +29,7 @@ import numpy as np
 
 columns = [
     "Collision values",
-    "Time (s)",
-    "Trial ID"
-    
+    "Time (s)"
 ]
 
 class laser_scan(Node):
@@ -41,10 +39,9 @@ class laser_scan(Node):
         self.scan_message = []
         self.results = []
         self.completed_trials=0
-        self.trial_id = "thigh_0.1"
 
         self.monitor_timer = self.create_timer(0.1, self.monitor)
-        output_directory = Path(__file__).resolve().parents[1] / "Control_system"
+        output_directory = Path(__file__).resolve().parents[1] / "control_system"
         output_directory.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
         self.output_path = output_directory / f"lidar_scan{timestamp}.csv"
@@ -77,8 +74,7 @@ class laser_scan(Node):
         if self.state:
             return
         current_time = self.get_clock().now()
-        elapsed_time= current_time - self.start_time
-        elapsed_time = float(elapsed_time.nanoseconds / 1e9)  # Convert to seconds
+        elapsed_time= (current_time - self.start_time).nanoseconds/1e9
 
         if elapsed_time >= 5.0:
             self.state = True
@@ -100,12 +96,11 @@ class laser_scan(Node):
             return
 
         
-        collisions=self.cluster.process_scan(scan_msg.angle_min, scan_msg.angle_increment, ranges, 0)
+        collisions = self.cluster.process_scan(scan_msg.angle_min, scan_msg.angle_increment, ranges, 0)
 
         self.results.append((
             json.dumps(collisions.tolist()),
             elapsed_time,
-            self.trial_id,
         ))
 
 
