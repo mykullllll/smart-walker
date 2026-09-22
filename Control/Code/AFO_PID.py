@@ -213,6 +213,9 @@ class Cluster:
         print(f"Number of clusters found: {len(unique_labels)}")
         centroids = []
 
+        if len(unique_labels)!=2:
+            return None, None, isoccluded, False
+        
         # Ideal Case (2 Clusters)
         if len(unique_labels) == 2:
             for index in unique_labels:
@@ -221,8 +224,22 @@ class Cluster:
                 centroids.append(centroid)
             self.occlusions_length = 0
 
+        if centroids[0][1] < centroids[1][1]:
+            left_leg = centroids[1]
+            right_leg = centroids[0]
+            self.prev_leg_l = left_leg
+            self.prev_leg_r = right_leg
+
+        else:
+            left_leg = centroids[0]
+            right_leg = centroids[1]
+            self.prev_leg_l = left_leg
+            self.prev_leg_r = right_leg
+
+        return left_leg, right_leg, isoccluded, False
+
         # Thighs too close together
-        elif len(unique_labels) == 1:
+        if len(unique_labels) == 1:
             leg_points = collisions[labels == unique_labels[0]]
             width = np.max(leg_points[:, 1]) - np.min(leg_points[:, 1])
 
@@ -258,40 +275,28 @@ class Cluster:
                         return self.prev_leg_l, single_centroid, isoccluded, False
 
                     else:
+                        #Temporary
                         return single_centroid, self.prev_leg_r, isoccluded, False
 
                 # If no history drop frame
                 else:
                     return None, None, isoccluded, False
 
-        if len(unique_labels) > 2:
-
+        #if len(unique_labels) > 2:
             if self.prev_leg_l is not None and self.prev_leg_r is not None:
+                
                 return self.prev_leg_l, self.prev_leg_r, isoccluded, False
-            else:
-                return None, None, isoccluded, False
 
-        if len(unique_labels) == 0:
+                
+
+        #if len(unique_labels) == 0:
             isoccluded = True
             self.occlusions_length += 1
             if self.occlusions_length >= 20:
                 return None, None, isoccluded, True
             return self.prev_leg_l, self.prev_leg_r, isoccluded, False
 
-        else:
-            if centroids[0][1] < centroids[1][1]:
-                left_leg = centroids[1]
-                right_leg = centroids[0]
-                self.prev_leg_l = left_leg
-                self.prev_leg_r = right_leg
 
-            else:
-                left_leg = centroids[0]
-                right_leg = centroids[1]
-                self.prev_leg_l = left_leg
-                self.prev_leg_r = right_leg
-
-        return left_leg, right_leg, isoccluded, False
 
     # Collision Scanner
     def process_scan(self, angle_min, angle_increment, ranges, angle_offset=0):
