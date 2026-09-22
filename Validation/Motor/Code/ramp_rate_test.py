@@ -4,6 +4,9 @@ from std_msgs.msg import Float64
 from sensor_msgs.msg import JointState
 import pandas as pd
 import rclpy
+import os 
+output_directory = os.path.expanduser('~/ros2_ws/validation/ramp_rate')
+os.makedirs(output_directory,exist_ok=True)
 
 class ramprate(Node):
 
@@ -20,8 +23,8 @@ class ramprate(Node):
         self.timer = self.create_timer(0.1,self.control_loop)
 
 
-        self.start_time = self.get_clock().now().nanoseconds / 1e9
-        self.motor_change_time = self.start_time
+        self.start_time = self.get_clock().now()
+        self.motor_change_time = self.start_time.nanoseconds/1e9
         self.current_time = 0.0
         self.commanded_history = []
         self.commanded_time_history = []
@@ -38,12 +41,12 @@ class ramprate(Node):
     def encoder_callback(self,msg):
         self.right_encoder_velocity = msg.velocity[0]
         self.left_encoder_velocity = msg.velocity[1]
-        self.current_time_encoder = (self.get_clock().now() - self.start_time).nanoseconds / 1e9
+        self.current_time_encoder = (self.get_clock().now() - self.start_time).nanoseconds/1e9
         self.encoder_time_history.append(self.current_time_encoder)
         self.capture_time = (msg.header.stamp.sec +msg.header.stamp.nanosec * 1e-9)     #Exact time stamp of sensor scan
         self.right_encoder_history.append(self.right_encoder_velocity)
         self.left_encoder_history.append(self.left_encoder_velocity)
-        self.encoder_latency.append(self.current_time_encoder - self.capture_encoder_time)
+        self.encoder_latency.append(self.current_time_encoder - self.capture_time)
 
     def motor_timer_callback(self):
         self.motor_change_time = (self.get_clock().now() - self.start_time).nanoseconds / 1e9
@@ -57,12 +60,12 @@ class ramprate(Node):
 
         if self.command_index >= len(self.motor_values):
             raise SystemExit
-        else:
-            right_msg = Float64()
-            left_msg = Float64()
-            right_msg.data = float(self.motor_values[self.command_index])
-            left_msg.data = float(self.motor_values[self.command_index])
 
+
+        right_msg = Float64()
+        left_msg = Float64()
+        right_msg.data = float(self.motor_values[self.command_index])
+        left_msg.data = float(self.motor_values[self.command_index])
         self.commanded_history.append(self.motor_values[self.command_index])
         self.commanded_time_history.append(self.current_time)
         self.right_wheel_pub.publish(right_msg)
@@ -71,28 +74,30 @@ class ramprate(Node):
         
     def export_csv(self):
         for index in range(len(self.right_encoder_history)-1):
-            self.right_acceleration.append((self.right_encoder_history[index+1]-self.right_encoder_history[index])/(self.encoder_time_history[index]-self.encoder_time_history[index+1]))
-            self.left_acceleration.append((self.left_encoder_history[index+1]-self.left_encoder_history[index])/(self.encoder_time_history[index]-self.encoder_time_history[index+1]))
+            self.right_acceleration.append((self.right_encoder_history[index+1]-self.right_encoder_history[index])/(self.encoder_time_history[index+1]-self.encoder_time_history[index]))
+            self.left_acceleration.append((self.left_encoder_history[index+1]-self.left_encoder_history[index])/(self.encoder_time_history[index+1]-self.encoder_time_history[index]))
         for index in range(len(self.right_acceleration)-1):
-            self.left_jerk.append((self.left_acceleration[index+1]-self.left_acceleration[index])/(self.encoder_time_history[index]-self.encoder_time_history[index+1]))
-            self.right_jerk.append((self.right_acceleration[index+1]-self.right_acceleration[index])/(self.encoder_time_history[index]-self.encoder_time_history[index+1]))
+            self.left_jerk.append((self.left_acceleration[index+1]-self.left_acceleration[index])/(self.encoder_time_history[index+1]-self.encoder_time_history[index]))
+            self.right_jerk.append((self.right_acceleration[index+1]-self.right_acceleration[index])/(self.encoder_time_history[index+1]-self.encoder_time_history[index]))
 
 
         df=pd.DataFrame({"Commanded Velocity":self.commanded_history,
                          "Commanded Time History":self.commanded_time_history,
                          })
         
-        df.to_csv('/home/ramp_rate0.1.csv',index=False)
-        encoder = pd.DataFrame({"Encoder Time":self.encoder_time_history,
+        df.to_csv(f'{output_directory}/truth_0.1.csv',index=False)
+        jerk = pd.DataFrame({"Encoder Time":self.encoder_time_history,
                                 "Right Encoder Velocity History":self.right_encoder_history,
                                 "Left Encoder Velocity History":self.left_encoder_history,
                                 "Latency Encoder":self.encoder_latency,
-                                "Right Encoder Acceleration":self.right_acceleration,
-                                "Left Encoder Acceleration" : self.left_acceleration,
-                                "Right Encoder Jerk": self.right_jerk,
-                                "Left Encoder Jerk": self.left_jerk,
-                                })
-        encoder.to_csv("/home/encoder_data0.1.csv")
+
+        })
+        dt=jerk["Encoder Time"].diff()
+        jerk["Right Encoder Acceleration"] = jerk["Right Encoder Velocity History"].diff()/dt
+        jerk["Left Encoder Acceleration"] = jerk["Left Encoder Velocity History"].diff()/dt
+        jerk["Right Encoder Jerk"] = jerk["Right Encoder Acceleration"].diff()/dt
+        jerk["Left Encoder Jerk"] = jerk["Left Encoder Acceleration"].diff()/dt
+        jerk.to_csv(f"{output_directory}/jerk_accel_0.1.csv", index = False)
 
 
 def main(args=None):
