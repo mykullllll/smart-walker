@@ -55,11 +55,8 @@ class ramprate(Node):
             self.command_index += 1
             self.motor_timer_callback()
 
-        if self.command_index > len(self.motor_values):
-            rclpy.shutdown()
-            self.export_csv()
-
-
+        if self.command_index >= len(self.motor_values):
+            raise SystemExit
         else:
             right_msg = Float64()
             left_msg = Float64()
@@ -76,6 +73,7 @@ class ramprate(Node):
         for index in range(len(self.right_encoder_history)-1):
             self.right_acceleration.append((self.right_encoder_history[index+1]-self.right_encoder_history[index])/(self.encoder_time_history[index]-self.encoder_time_history[index+1]))
             self.left_acceleration.append((self.left_encoder_history[index+1]-self.left_encoder_history[index])/(self.encoder_time_history[index]-self.encoder_time_history[index+1]))
+        for index in range(len(self.right_acceleration)-1):
             self.left_jerk.append((self.left_acceleration[index+1]-self.left_acceleration[index])/(self.encoder_time_history[index]-self.encoder_time_history[index+1]))
             self.right_jerk.append((self.right_acceleration[index+1]-self.right_acceleration[index])/(self.encoder_time_history[index]-self.encoder_time_history[index+1]))
 
@@ -100,10 +98,14 @@ class ramprate(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ramprate()
-    rclpy.spin(node)
-    node.export_csv()
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except SystemExit:
+        pass
+    finally:
+        node.export_csv()
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__== '__main__':
     main()
