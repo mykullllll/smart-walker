@@ -1,7 +1,7 @@
-import numpy as np
 from rclpy.node import Node
 from std_msgs.msg import Float64
 from sensor_msgs.msg import JointState
+from std_msgs.msg import Bool
 import pandas as pd
 import rclpy
 import os 
@@ -14,8 +14,11 @@ class ramprate(Node):
         super().__init__('ramprate')
         
         self.encoder_sub = self.create_subscription(JointState,'encoder_data',self.encoder_callback,10)
-        self.right_wheel_pub = self.create_publisher(Float64,'right_wheel_velocity',10)
-        self.left_wheel_pub = self.create_publisher(Float64,"left_wheel_velocity",10)
+        self.right_wheel_pub = self.create_publisher(Float64,'/right_wheel_velocity',10)
+        self.left_wheel_pub = self.create_publisher(Float64,"/left_wheel_velocity",10)
+
+        self.shutdown_pub = self.create_publisher(Bool, "/shutdown", 1)
+        self.shutdown_pub.publish(Bool(data=False))
 
     
         self.command_index = 0
@@ -42,11 +45,12 @@ class ramprate(Node):
         self.right_encoder_velocity = msg.velocity[0]
         self.left_encoder_velocity = msg.velocity[1]
         self.current_time_encoder = (self.get_clock().now() - self.start_time).nanoseconds/1e9
+        self.recieve_time = self.get_clock().now().nanoseconds / 1e9
         self.encoder_time_history.append(self.current_time_encoder)
         self.capture_time = (msg.header.stamp.sec +msg.header.stamp.nanosec * 1e-9)     #Exact time stamp of sensor scan
         self.right_encoder_history.append(self.right_encoder_velocity)
         self.left_encoder_history.append(self.left_encoder_velocity)
-        self.encoder_latency.append(self.current_time_encoder - self.capture_time)
+        self.encoder_latency.append(self.recieve_time - self.capture_time)
 
     def motor_timer_callback(self):
         self.motor_change_time = (self.get_clock().now() - self.start_time).nanoseconds / 1e9
@@ -54,12 +58,15 @@ class ramprate(Node):
     def control_loop(self): 
         # 5 Seconds per motor command
         self.current_time = (self.get_clock().now()- self.start_time).nanoseconds / 1e9
-        if  self.motor_change_time - self.current_time > 5:
+        if  self.current_time - self.motor_change_time > 5:
             self.command_index += 1
             self.motor_timer_callback()
 
         if self.command_index >= len(self.motor_values):
+            self.right_wheel_pub.publish(Float64(data=0.0))
+            self.left_wheel_pub.publish(Float64(data=0.0))
             raise SystemExit
+        
 
 
         right_msg = Float64()
