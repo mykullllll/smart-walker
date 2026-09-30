@@ -5,6 +5,8 @@ from std_msgs.msg import Bool
 import pandas as pd
 import rclpy
 import os 
+from rclpy.signals import SignalHandlerOptions
+
 output_directory = os.path.expanduser('~/ros2_ws/validation/ramp_rate')
 os.makedirs(output_directory,exist_ok=True)
 
@@ -17,8 +19,10 @@ class ramprate(Node):
         self.right_wheel_pub = self.create_publisher(Float64,'/right_wheel_velocity',10)
         self.left_wheel_pub = self.create_publisher(Float64,"/left_wheel_velocity",10)
 
+        self.enable_count = 0
+        self.enable_timer = self.create_timer(0.2,self.enable_motors)
         self.shutdown_pub = self.create_publisher(Bool, "/shutdown", 1)
-        self.shutdown_pub.publish(Bool(data=False))
+        self.get_logger().info("Node Started")
 
     
         self.command_index = 0
@@ -27,7 +31,7 @@ class ramprate(Node):
 
 
         self.start_time = self.get_clock().now()
-        self.motor_change_time = self.start_time.nanoseconds/1e9
+        self.motor_change_time = 0
         self.current_time = 0.0
         self.commanded_history = []
         self.commanded_time_history = []
@@ -39,11 +43,12 @@ class ramprate(Node):
         self.left_acceleration = []
         self.right_jerk = []
         self.left_jerk = []
+
  
 
     def encoder_callback(self,msg):
-        self.right_encoder_velocity = msg.velocity[0]
-        self.left_encoder_velocity = msg.velocity[1]
+        self.right_encoder_velocity = msg.velocity[1]
+        self.left_encoder_velocity = msg.velocity[0]
         self.current_time_encoder = (self.get_clock().now() - self.start_time).nanoseconds/1e9
         self.recieve_time = self.get_clock().now().nanoseconds / 1e9
         self.encoder_time_history.append(self.current_time_encoder)
@@ -54,6 +59,25 @@ class ramprate(Node):
 
     def motor_timer_callback(self):
         self.motor_change_time = (self.get_clock().now() - self.start_time).nanoseconds / 1e9
+
+
+    def stop_motors(self):
+        self.right_wheel_pub.publish(Float64(data=0.0))
+        self.left_wheel_pub.publish(Float64(data=0.0))  
+        self.shutdown_pub.publish(Bool(data=True))
+        self.get_logger().info("Ramp Rate Test Node Stopped")
+
+    def enable_motors(self):
+        self.right_wheel_pub.publish(Float64(data=0.0))
+        self.left_wheel_pub.publish(Float64(data=0.0))
+        self.shutdown_pub.publish(Bool(data=False))
+
+        self.enable_count += 1
+        if self.enable_count > 10:
+            self.enable_timer.cancel()
+            
+        self.get_logger().info("Ramp Rate Test Node Started")
+
 
     def control_loop(self): 
         # 5 Seconds per motor command
@@ -66,8 +90,6 @@ class ramprate(Node):
             self.right_wheel_pub.publish(Float64(data=0.0))
             self.left_wheel_pub.publish(Float64(data=0.0))
             raise SystemExit
-        
-
 
         right_msg = Float64()
         left_msg = Float64()
@@ -92,7 +114,7 @@ class ramprate(Node):
                          "Commanded Time History":self.commanded_time_history,
                          })
         
-        df.to_csv(f'{output_directory}/truth_0.1.csv',index=False)
+        df.to_csv(f'{output_directory}/truth_0.9.csv',index=False)
         jerk = pd.DataFrame({"Encoder Time":self.encoder_time_history,
                                 "Right Encoder Velocity History":self.right_encoder_history,
                                 "Left Encoder Velocity History":self.left_encoder_history,
@@ -104,11 +126,11 @@ class ramprate(Node):
         jerk["Left Encoder Acceleration"] = jerk["Left Encoder Velocity History"].diff()/dt
         jerk["Right Encoder Jerk"] = jerk["Right Encoder Acceleration"].diff()/dt
         jerk["Left Encoder Jerk"] = jerk["Left Encoder Acceleration"].diff()/dt
-        jerk.to_csv(f"{output_directory}/jerk_accel_0.1.csv", index = False)
+        jerk.to_csv(f"{output_directory}/jerk_accel_0.9.csv", index = False)
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    rclpy.init(args=args,signal_handler_options=SignalHandlerOptions.NO)
     node = ramprate()
     try:
         rclpy.spin(node)
@@ -116,6 +138,7 @@ def main(args=None):
         pass
     finally:
         node.export_csv()
+        node.stop_motors()
         node.destroy_node()
         rclpy.shutdown()
 
